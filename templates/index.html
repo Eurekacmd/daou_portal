@@ -98,24 +98,23 @@
 </head>
 <body>
 
-    <!-- DUMMY EMAIL INBOX TOAST NOTIFICATION -->
+    <!-- REAL EMAIL SENT NOTIFICATION (the OTP itself only lives in the user's actual inbox now) -->
     <div id="email-notification-toast" class="email-toast">
         <div class="email-toast-header">
             <span>📩 Secure Mail Notification</span>
             <span style="cursor:pointer; font-size: 14px;" onclick="closeEmailToast()">✕</span>
         </div>
-        <div class="email-toast-title">To: <span id="toast-recipient-address"></span></div>
-        <div style="font-size: 12px; color: var(--text-light);">Subject: Your DAOU 2FA Passcode</div>
-        <div class="email-toast-body">
-            Security OTP Clearance Code:<br>
-            <strong id="toast-otp-display" style="font-size: 18px; color: var(--primary-hover); letter-spacing: 2px;">000000</strong>
+        <div class="email-toast-title">Sent to: <span id="toast-recipient-address"></span></div>
+        <div style="font-size: 12px; color: var(--text-light);">Subject: Your DAOU Portal Security Code</div>
+        <div class="email-toast-body" style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;">
+            Check your inbox for your 6-digit OTP.
         </div>
     </div>
 
     <!-- BIOMETRIC EMULATION MODAL -->
     <div id="bio-modal">
         <div class="bio-box">
-            <div class="fingerprint-icon" onclick="simulateBiometricSensorClick()">🫵</div>
+            <div class="fingerprint-icon">🫵</div>
             <h3 id="bio-title">Verify Biometric Signature</h3>
             <p id="bio-desc" style="font-size: 13px; color: var(--text-light); margin-bottom: 20px;"></p>
             <button class="btn-action" style="background: #c62828;" onclick="closeBiometricModal()">Cancel Handshake</button>
@@ -157,7 +156,7 @@
                             <input type="password" id="login-password" required placeholder="••••">
                         </div>
                         <button type="submit" class="btn-action btn-blue" style="margin-bottom: 12px;">Sign In with Password ➔</button>
-                        <button type="button" class="btn-action" style="background: var(--dark);" onclick="initiateBiometricBypassSignIn()">⚡ Use Biometric Bypass</button>
+                        <button type="button" class="btn-action" style="background: var(--dark);" onclick="initiatePasskeySignIn()">⚡ Sign In with Passkey</button>
                     </form>
                 </div>
 
@@ -267,11 +266,53 @@
             }
         }
 
-        function triggerEmailToastDelivery(recipient, code) {
+        function triggerEmailToastDelivery(recipient) {
             document.getElementById('toast-recipient-address').innerText = recipient;
-            document.getElementById('toast-otp-display').innerText = code;
             const toast = document.getElementById('email-notification-toast');
             toast.style.display = 'block';
+        }
+
+        // ------------------------------------------------------------------
+        // WebAuthn (real passkey / biometric) helpers
+        // ------------------------------------------------------------------
+        async function performPasskeyRegistration(userId) {
+            const beginResp = await fetch('/api/webauthn/register/begin', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ user_id: userId })
+            });
+            const optionsJSON = await beginResp.json();
+            if (optionsJSON.success === false) throw new Error(optionsJSON.message || 'Could not start passkey registration.');
+
+            const creationOptions = PublicKeyCredential.parseCreationOptionsFromJSON(optionsJSON);
+            const credential = await navigator.credentials.create({ publicKey: creationOptions });
+
+            const completeResp = await fetch('/api/webauthn/register/complete', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ user_id: userId, credential: credential.toJSON() })
+            });
+            return await completeResp.json();
+        }
+
+        async function performPasskeyLogin(username) {
+            const beginResp = await fetch('/api/webauthn/login/begin', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ username })
+            });
+            const optionsJSON = await beginResp.json();
+            if (optionsJSON.success === false) throw new Error(optionsJSON.message || 'No passkey registered for this account.');
+
+            const requestOptions = PublicKeyCredential.parseRequestOptionsFromJSON(optionsJSON);
+            const credential = await navigator.credentials.get({ publicKey: requestOptions });
+
+            const completeResp = await fetch('/api/webauthn/login/complete', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ username, credential: credential.toJSON() })
+            });
+            return await completeResp.json();
         }
 
         function closeEmailToast() {
@@ -394,10 +435,9 @@
                     document.getElementById('sub-login').classList.remove('active');
                     document.getElementById('sub-verify').classList.add('active');
                     
-                    logTerminal(`<span class="term-success">[SUCCESS] Password validated. OTP generated successfully.</span>`);
-                    logTerminal(`<div class="term-highlight">🔑 TIME-LIMITED SECURITY OTP: ${res.generated_otp}</div>`);
+                    logTerminal(`<span class="term-success">[SUCCESS] Password validated. OTP dispatched to registered email address.</span>`);
                     
-                    triggerEmailToastDelivery(res.masked_email, res.generated_otp);
+                    triggerEmailToastDelivery(res.masked_email);
                 } else {
                     logTerminal(`<span class="term-warn">[AUTH FAILED] ${res.message}</span>`);
                     if (alertBanner) {
@@ -464,75 +504,63 @@
             switchTab('profile');
         }
 
-        async function initiateBiometricBypassSignIn() {
+        async function initiatePasskeySignIn() {
+            if (!window.PublicKeyCredential) {
+                alert("This browser does not support WebAuthn passkeys. Try Chrome, Edge, or Safari.");
+                return;
+            }
+            const userVal = document.getElementById('login-username').value;
+            if (!userVal) {
+                alert("Please type your username into the Portal Username box first.");
+                return;
+            }
+            document.getElementById('bio-title').innerText = "Verify Secure Biometrics";
+            document.getElementById('bio-desc').innerText = "Follow the prompt from your browser or device to authenticate.";
+            document.getElementById('bio-modal').style.display = "flex";
+            logTerminal(`Requesting WebAuthn assertion for: ${userVal}`);
             try {
-                const userVal = document.getElementById('login-username').value;
-                if(!userVal) {
-                    alert("Please type your username into the Portal Username box first.");
-                    return;
-                }
-                const response = await fetch('/api/check-biometric-enrolled', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ username: userVal })
-                });
-                const res = await response.json();
-
-                if (res.success && res.enrolled) {
-                    currentAuthUsername = userVal;
-                    biometricTriggerAction = "verify";
-                    document.getElementById('bio-title').innerText = "Verify Secure Biometrics";
-                    document.getElementById('bio-desc').innerText = "Scan your secure passkey profile configuration directly.";
-                    document.getElementById('bio-modal').style.display = "flex";
+                const res = await performPasskeyLogin(userVal);
+                document.getElementById('bio-modal').style.display = "none";
+                if (res.success) {
+                    logTerminal("<span class='term-success'>[PASSKEY OK] WebAuthn signature verified.</span>");
+                    completeSuccessfulLogin(res);
                 } else {
-                    alert("No hardware biometric key matches this account profile yet. Complete verification with password first to enroll keys.");
+                    logTerminal(`<span class="term-warn">[PASSKEY FAILED] ${res.message}</span>`);
+                    alert(res.message || "Passkey sign-in failed.");
                 }
             } catch (err) {
+                document.getElementById('bio-modal').style.display = "none";
                 logTerminal(`<span class="term-warn">[BIO ERR] ${err.message}</span>`);
+                alert("Passkey sign-in was cancelled or failed: " + err.message);
             }
         }
 
-        function triggerBiometricEnrollmentHandshake() {
-            biometricTriggerAction = "enroll";
+        async function triggerBiometricEnrollmentHandshake() {
+            if (!window.PublicKeyCredential) {
+                alert("This browser does not support WebAuthn passkeys. Try Chrome, Edge, or Safari.");
+                return;
+            }
             document.getElementById('bio-title').innerText = "Register Secure Biometrics";
-            document.getElementById('bio-desc').innerText = "Press the touch signature module interface to link hardware parameters directly.";
+            document.getElementById('bio-desc').innerText = "Follow the prompt from your browser or device to create a passkey.";
             document.getElementById('bio-modal').style.display = "flex";
+            try {
+                const res = await performPasskeyRegistration(cachedUserData.user_id);
+                document.getElementById('bio-modal').style.display = "none";
+                if (res.success) {
+                    logTerminal("<span class='term-success'>[PASSKEY ENROLLED] WebAuthn credential registered.</span>");
+                    document.getElementById('biometric-status-msg').innerText = "🛡️ Device Hardware Biometrics: ENROLLED & PROTECTED";
+                    document.getElementById('biometric-status-msg').style.color = "var(--success)";
+                } else {
+                    alert(res.message || "Passkey registration failed.");
+                }
+            } catch (err) {
+                document.getElementById('bio-modal').style.display = "none";
+                logTerminal(`<span class="term-warn">[BIO ENROLL ERR] ${err.message}</span>`);
+                alert("Passkey registration was cancelled or failed: " + err.message);
+            }
         }
 
         function closeBiometricModal() { document.getElementById('bio-modal').style.display = "none"; }
-
-        async function simulateBiometricSensorClick() {
-            document.getElementById('bio-modal').style.display = "none";
-            try {
-                if (biometricTriggerAction === "enroll") {
-                    const response = await fetch('/api/enroll-biometrics', {
-                        method: 'POST',
-                        headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({ user_id: cachedUserData.user_id })
-                    });
-                    const res = await response.json();
-                    if (res.success) {
-                        logTerminal("<span class='term-success'>[PASSKEY ENROLLED] Hardware keys logged.</span>");
-                        document.getElementById('biometric-status-msg').innerText = "🛡️ Device Hardware Biometrics: ENROLLED & PROTECTED";
-                        document.getElementById('biometric-status-msg').style.color = "var(--success)";
-                    }
-                } else if (biometricTriggerAction === "verify") {
-                    const response = await fetch('/api/verify-biometrics-bypass', {
-                        method: 'POST',
-                        headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({ username: currentAuthUsername })
-                    });
-                    const res = await response.json();
-                    if (res.success) {
-                        completeSuccessfulLogin(res);
-                    } else {
-                        alert("Biometric pattern signatures mismatch.");
-                    }
-                }
-            } catch (err) {
-                logTerminal(`<span class="term-warn">[BIO SENSOR ERR] ${err.message}</span>`);
-            }
-        }
 
         function triggerSignOut() {
             cachedUserData = null;
