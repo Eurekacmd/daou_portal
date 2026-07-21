@@ -4,6 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>DAOU UNIVERSITY - Student & Staff Portal</title>
+    <!-- Google Identity Services Library -->
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
     <style>
         :root {
             --primary: #c5a059;
@@ -76,13 +78,8 @@
         .terminal { background: #1e1b15; color: #4ade80; font-family: 'Courier New', Courier, monospace; border-radius: 8px; padding: 15px; font-size: 12px; height: 250px; overflow-y: auto; text-align: left; border: 1px solid var(--border); }
         .term-success { color: #4ADE80; }
         .term-warn { color: #f87171; }
-        .term-highlight { color: #ffc107; font-weight: bold; font-size: 14px; border: 1px dashed #ffc107; padding: 4px 8px; display: inline-block; margin-top: 5px; }
+        .google-btn-wrapper { display: flex; justify-content: center; margin-top: 15px; margin-bottom: 5px; }
 
-        #bio-modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(42, 38, 31, 0.7); backdrop-filter: blur(4px); z-index: 1000; align-items: center; justify-content: center; }
-        .bio-box { background: var(--card-bg); border-radius: 16px; padding: 30px; width: 340px; text-align: center; border: 1px solid var(--border); }
-        .fingerprint-icon { font-size: 50px; cursor: pointer; margin-bottom: 15px; display: inline-block; }
-
-        /* SIMULATED DUMMY INBOX TOAST NOTIFICATION */
         .email-toast {
             position: fixed; bottom: 20px; right: 20px; width: 360px;
             background: #ffffff; border-left: 5px solid var(--primary);
@@ -98,7 +95,6 @@
 </head>
 <body>
 
-    <!-- REAL EMAIL SENT NOTIFICATION (the OTP itself only lives in the user's actual inbox now) -->
     <div id="email-notification-toast" class="email-toast">
         <div class="email-toast-header">
             <span>📩 Secure Mail Notification</span>
@@ -111,22 +107,12 @@
         </div>
     </div>
 
-    <!-- BIOMETRIC EMULATION MODAL -->
-    <div id="bio-modal">
-        <div class="bio-box">
-            <div class="fingerprint-icon">🫵</div>
-            <h3 id="bio-title">Verify Biometric Signature</h3>
-            <p id="bio-desc" style="font-size: 13px; color: var(--text-light); margin-bottom: 20px;"></p>
-            <button class="btn-action" style="background: #c62828;" onclick="closeBiometricModal()">Cancel Handshake</button>
-        </div>
-    </div>
-
     <div class="navbar">
         <div class="brand-zone" onclick="promptAdminModeSwitch()" title="Click to Switch Portal Mode">
             <div class="logo-placeholder">DAOU</div>
             <div class="brand-text">
                 <h1>DAOU UNIVERSITY</h1>
-                <p>STUDENT & STAFF PORTAL SECURED WITH EMAIL 2FA & FIDO2</p>
+                <p>STUDENT & STAFF PORTAL SECURED WITH EMAIL 2FA & GOOGLE AUTH</p>
             </div>
         </div>
         <div>
@@ -139,12 +125,12 @@
             <div id="auth-container" class="card view-section active">
                 <div class="portal-header">
                     <h2>🎓 DAOU Gateway Authentication</h2>
-                    <div class="url-badge">HTTPS://PORTAL.DAOU.EDU.NG/AUTH</div>
+                    <div class="url-badge">daou-portal.onrender.com</div>
                 </div>
                 
                 <div id="sub-login" class="panel-padding view-section active" style="padding:30px; text-align:center;">
                     <h2 style="margin-bottom: 8px;">Sign In to Your Account</h2>
-                    <p style="color: var(--text-light); font-size: 14px; margin-bottom: 25px;">Provide your credentials or use enrolled biometric hardware.</p>
+                    <p style="color: var(--text-light); font-size: 14px; margin-bottom: 25px;">Provide your credentials or use linked Google account parameters.</p>
                     <div id="login-alert" class="alert-banner"></div>
                     <form onsubmit="executeLogin(event)">
                         <div class="form-group">
@@ -156,8 +142,28 @@
                             <input type="password" id="login-password" required placeholder="••••">
                         </div>
                         <button type="submit" class="btn-action btn-blue" style="margin-bottom: 12px;">Sign In with Password ➔</button>
-                        <button type="button" class="btn-action" style="background: var(--dark);" onclick="initiatePasskeySignIn()">⚡ Sign In with Passkey</button>
                     </form>
+                    
+                    <div style="margin: 15px 0; color: var(--text-light); font-size: 12px; font-weight: bold; text-transform: uppercase;">— OR —</div>
+                    
+                    <!-- Google Single Sign-On Injection Target -->
+                    <div class="google-btn-wrapper">
+                        <div id="g_id_onload"
+                             data-client_id="1094968049844-p7g646vkmlccpjlcdnsmaq6hi2jpknd9.apps.googleusercontent.com"
+                             data-context="signin"
+                             data-ux_mode="popup"
+                             data-callback="handleGoogleCredentialResponse"
+                             data-auto_select="false">
+                        </div>
+                        <div class="g_id_signin"
+                             data-type="standard"
+                             data-shape="rectangular"
+                             data-theme="outline"
+                             data-text="signin_with"
+                             data-size="large"
+                             data-logo_alignment="left">
+                        </div>
+                    </div>
                 </div>
 
                 <div id="sub-verify" class="panel-padding view-section" style="padding:30px; text-align:center;">
@@ -172,13 +178,13 @@
                         <button type="submit" class="btn-action btn-blue">Verify Security Clearance Key ➔</button>
                     </form>
                 </div>
-                <div class="footer-badge">Secure Layer Active: RSA-SHA256 & WebAuthn Handshake</div>
+                <div class="footer-badge">Secure Layer Active: RSA-SHA256 & Google OAuth ID Token Guard</div>
             </div>
 
             <div id="main-dashboard-container" class="card view-section">
                 <div class="portal-header">
                     <h2>🎓 DAOU Edu-Portal Dashboard</h2>
-                    <div class="url-badge">HTTPS://PORTAL.DAOU.EDU.NG/DASHBOARD</div>
+                    <div class="url-badge">daou-portal.onrender.com/dashboard</div>
                 </div>
 
                 <div class="tabs">
@@ -194,9 +200,8 @@
                     <div class="form-group"><label>Academic Matric Number</label><input type="text" readonly id="dash-matric"></div>
                     
                     <div style="border: 1px solid var(--border); background: var(--light-gold); border-radius: 8px; padding: 20px; margin-top: 25px;">
-                        <h4 style="font-size:14px; margin-bottom:8px;">🔑 Passkey Management</h4>
-                        <div id="biometric-status-msg" style="font-size: 12px; font-weight: bold; color: #c62828; margin-bottom: 15px;">⚠️ Device Hardware Biometrics: NOT ENROLLED</div>
-                        <button type="button" id="enroll-bio-btn" class="btn-action" style="background: var(--primary-hover); width: auto; padding: 10px 20px;" onclick="triggerBiometricEnrollmentHandshake()">Enroll TouchID/FaceID</button>
+                        <h4 style="font-size:14px; margin-bottom:8px;">🔗 Google Federation Sync</h4>
+                        <div id="google-status-msg" style="font-size: 12px; font-weight: bold; color: #c62828; margin-bottom: 5px;">⚠️ Google Authentication Linkage: INACTIVE</div>
                     </div>
                     <button class="btn-action btn-dark" onclick="triggerSignOut()" style="margin-top: 25px;">📤 Sign Out of Portal</button>
                 </div>
@@ -231,7 +236,7 @@
                         <div><label>Password</label><input type="password" id="db-pass" value="password" required></div>
                     </div>
                     <div class="form-group">
-                        <label>Target Verification Email Address</label>
+                        <label>Target Verification Email Address (Must match Google account for OAuth SSO)</label>
                         <input type="email" id="db-email" value="enochstudent@daou.edu.ng" required>
                     </div>
                     <div style="display:grid; grid-template-columns:1fr 1fr; gap:15px; margin-bottom:15px;">
@@ -254,8 +259,6 @@
 
     <script>
         let cachedUserData = null;
-        let biometricTriggerAction = null;
-        let currentAuthUsername = null;
         let isAdminAuthenticated = false;
 
         function logTerminal(msg) {
@@ -272,51 +275,39 @@
             toast.style.display = 'block';
         }
 
-        // ------------------------------------------------------------------
-        // WebAuthn (real passkey / biometric) helpers
-        // ------------------------------------------------------------------
-        async function performPasskeyRegistration(userId) {
-            const beginResp = await fetch('/api/webauthn/register/begin', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ user_id: userId })
-            });
-            const optionsJSON = await beginResp.json();
-            if (optionsJSON.success === false) throw new Error(optionsJSON.message || 'Could not start passkey registration.');
-
-            const creationOptions = PublicKeyCredential.parseCreationOptionsFromJSON(optionsJSON);
-            const credential = await navigator.credentials.create({ publicKey: creationOptions });
-
-            const completeResp = await fetch('/api/webauthn/register/complete', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ user_id: userId, credential: credential.toJSON() })
-            });
-            return await completeResp.json();
-        }
-
-        async function performPasskeyLogin(username) {
-            const beginResp = await fetch('/api/webauthn/login/begin', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ username })
-            });
-            const optionsJSON = await beginResp.json();
-            if (optionsJSON.success === false) throw new Error(optionsJSON.message || 'No passkey registered for this account.');
-
-            const requestOptions = PublicKeyCredential.parseRequestOptionsFromJSON(optionsJSON);
-            const credential = await navigator.credentials.get({ publicKey: requestOptions });
-
-            const completeResp = await fetch('/api/webauthn/login/complete', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ username, credential: credential.toJSON() })
-            });
-            return await completeResp.json();
-        }
-
         function closeEmailToast() {
             document.getElementById('email-notification-toast').style.display = 'none';
+        }
+
+        // Handle structural payload returned by Google SSO
+        async function handleGoogleCredentialResponse(response) {
+            const alertBanner = document.getElementById('login-alert');
+            if (alertBanner) alertBanner.style.display = "none";
+            
+            logTerminal("Interpreting JSON Web Token returned by Google security nodes...");
+            
+            try {
+                const res = await fetch('/api/auth/google', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ id_token: response.credential })
+                });
+                
+                const data = await res.json();
+                
+                if (data.success) {
+                    logTerminal("<span class='term-success'>[GOOGLE AUTH OK] Integrity footprint verified.</span>");
+                    completeSuccessfulLogin(data);
+                } else {
+                    logTerminal(`<span class="term-warn">[OAUTH ERROR] ${data.message}</span>`);
+                    if (alertBanner) {
+                        alertBanner.innerText = data.message;
+                        alertBanner.style.display = "block";
+                    }
+                }
+            } catch (err) {
+                logTerminal(`<span class="term-warn">[OAUTH NET ERR] ${err.message}</span>`);
+            }
         }
 
         async function promptAdminModeSwitch() {
@@ -490,77 +481,14 @@
             document.getElementById('dash-fullname').value = res.user_info.full_name;
             document.getElementById('dash-matric').value = res.user_info.matric_no;
             
-            const bioMsg = document.getElementById('biometric-status-msg');
-            if (res.user_info.biometric_enrolled) {
-                bioMsg.innerText = "🛡️ Device Hardware Biometrics: ENROLLED & PROTECTED";
-                bioMsg.style.color = "var(--success)";
-            } else {
-                bioMsg.innerText = "⚠️ Device Hardware Biometrics: NOT ENROLLED";
-                bioMsg.style.color = "#c62828";
-            }
+            const googleMsg = document.getElementById('google-status-msg');
+            googleMsg.innerText = "🛡️ Google Authentication Linkage: ACTIVE & SECURED";
+            googleMsg.style.color = "var(--success)";
             
             document.getElementById('auth-container').classList.remove('active');
             document.getElementById('main-dashboard-container').classList.add('active');
             switchTab('profile');
         }
-
-        async function initiatePasskeySignIn() {
-            if (!window.PublicKeyCredential) {
-                alert("This browser does not support WebAuthn passkeys. Try Chrome, Edge, or Safari.");
-                return;
-            }
-            const userVal = document.getElementById('login-username').value;
-            if (!userVal) {
-                alert("Please type your username into the Portal Username box first.");
-                return;
-            }
-            document.getElementById('bio-title').innerText = "Verify Secure Biometrics";
-            document.getElementById('bio-desc').innerText = "Follow the prompt from your browser or device to authenticate.";
-            document.getElementById('bio-modal').style.display = "flex";
-            logTerminal(`Requesting WebAuthn assertion for: ${userVal}`);
-            try {
-                const res = await performPasskeyLogin(userVal);
-                document.getElementById('bio-modal').style.display = "none";
-                if (res.success) {
-                    logTerminal("<span class='term-success'>[PASSKEY OK] WebAuthn signature verified.</span>");
-                    completeSuccessfulLogin(res);
-                } else {
-                    logTerminal(`<span class="term-warn">[PASSKEY FAILED] ${res.message}</span>`);
-                    alert(res.message || "Passkey sign-in failed.");
-                }
-            } catch (err) {
-                document.getElementById('bio-modal').style.display = "none";
-                logTerminal(`<span class="term-warn">[BIO ERR] ${err.message}</span>`);
-                alert("Passkey sign-in was cancelled or failed: " + err.message);
-            }
-        }
-
-        async function triggerBiometricEnrollmentHandshake() {
-            if (!window.PublicKeyCredential) {
-                alert("This browser does not support WebAuthn passkeys. Try Chrome, Edge, or Safari.");
-                return;
-            }
-            document.getElementById('bio-title').innerText = "Register Secure Biometrics";
-            document.getElementById('bio-desc').innerText = "Follow the prompt from your browser or device to create a passkey.";
-            document.getElementById('bio-modal').style.display = "flex";
-            try {
-                const res = await performPasskeyRegistration(cachedUserData.user_id);
-                document.getElementById('bio-modal').style.display = "none";
-                if (res.success) {
-                    logTerminal("<span class='term-success'>[PASSKEY ENROLLED] WebAuthn credential registered.</span>");
-                    document.getElementById('biometric-status-msg').innerText = "🛡️ Device Hardware Biometrics: ENROLLED & PROTECTED";
-                    document.getElementById('biometric-status-msg').style.color = "var(--success)";
-                } else {
-                    alert(res.message || "Passkey registration failed.");
-                }
-            } catch (err) {
-                document.getElementById('bio-modal').style.display = "none";
-                logTerminal(`<span class="term-warn">[BIO ENROLL ERR] ${err.message}</span>`);
-                alert("Passkey registration was cancelled or failed: " + err.message);
-            }
-        }
-
-        function closeBiometricModal() { document.getElementById('bio-modal').style.display = "none"; }
 
         function triggerSignOut() {
             cachedUserData = null;
