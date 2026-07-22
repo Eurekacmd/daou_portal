@@ -3,8 +3,10 @@ import sqlite3
 import random
 import time
 import smtplib
+import csv
+import io
 from email.mime.text import MIMEText
-from flask import Flask, request, jsonify, render_template
+from flask import Flask, request, jsonify, render_template, Response
 
 # Cryptographic Federated Verification Imports
 from google.oauth2 import id_token
@@ -86,28 +88,45 @@ def execute_query(query, params=(), fetch_one=False, fetch_all=False, commit=Fal
 def init_db():
     """Builds the active table framework mappings cleanly if not pre-configured."""
     if IS_POSTGRES and HAS_POSTGRES:
-        create_table_query = '''
+        create_users_table = '''
             CREATE TABLE IF NOT EXISTS users (
                 id SERIAL PRIMARY KEY,
-                username VARCHAR(100) UNIQUE NOT NULL,
+                username VARCHAR(100) NOT NULL,
                 password VARCHAR(255) NOT NULL,
                 email VARCHAR(255) UNIQUE NOT NULL,
                 full_name VARCHAR(255) NOT NULL,
-                matric_no VARCHAR(100) UNIQUE NOT NULL
+                matric_no VARCHAR(100) NOT NULL
+            )
+        '''
+        create_ratings_table = '''
+            CREATE TABLE IF NOT EXISTS ratings (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                rating INT NOT NULL,
+                submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         '''
     else:
-        create_table_query = '''
+        create_users_table = '''
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                username TEXT UNIQUE NOT NULL,
+                username TEXT NOT NULL,
                 password TEXT NOT NULL,
                 email TEXT UNIQUE NOT NULL,
                 full_name TEXT NOT NULL,
-                matric_no TEXT UNIQUE NOT NULL
+                matric_no TEXT NOT NULL
             )
         '''
-    execute_query(create_table_query, commit=True)
+        create_ratings_table = '''
+            CREATE TABLE IF NOT EXISTS ratings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                rating INTEGER NOT NULL,
+                submitted_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        '''
+    execute_query(create_users_table, commit=True)
+    execute_query(create_ratings_table, commit=True)
 
 
 def write_auth_log(username, action, status):
@@ -116,7 +135,7 @@ def write_auth_log(username, action, status):
 
 def send_otp_email(recipient_email, full_name, otp_code):
     if not SMTP_USER or not SMTP_PASS:
-        write_auth_log("SYSTEM", "SMTP credentials not configured", "ERROR")
+        write_auth_log("SYSTEM", "SMTP credentials missing from environment settings!", "ERROR")
         return False
 
     subject = "Your DAOU Portal Security Code"
@@ -134,23 +153,27 @@ def send_otp_email(recipient_email, full_name, otp_code):
     msg['To'] = recipient_email
 
     try:
-        with smtplib.SMTP_SSL(SMTP_HOST, 465, timeout=15) as server:
+        write_auth_log("SYSTEM", f"Attempting SMTP SSL handshake via {SMTP_HOST}:465", "INIT")
+        with smtplib.SMTP_SSL(SMTP_HOST, 465, timeout=10) as server:
             server.login(SMTP_USER, SMTP_PASS)
             server.sendmail(SMTP_USER, [recipient_email], msg.as_string())
+        write_auth_log("SYSTEM", f"OTP successfully dispatched via SSL to {recipient_email}", "SUCCESS")
         return True
     except Exception as e_ssl:
-        write_auth_log("SYSTEM", f"SMTP SSL send failure: {str(e_ssl)}", "WARN")
+        write_auth_log("SYSTEM", f"SMTP SSL Port 465 transmission failed: {str(e_ssl)}", "WARN")
 
     try:
-        with smtplib.SMTP(SMTP_HOST, 587, timeout=15) as server:
+        write_auth_log("SYSTEM", f"Attempting fallback SMTP TLS handshake via {SMTP_HOST}:587", "INIT")
+        with smtplib.SMTP(SMTP_HOST, 587, timeout=10) as server:
             server.ehlo()
             server.starttls()
             server.ehlo()
             server.login(SMTP_USER, SMTP_PASS)
             server.sendmail(SMTP_USER, [recipient_email], msg.as_string())
+        write_auth_log("SYSTEM", f"OTP successfully dispatched via TLS Fallback to {recipient_email}", "SUCCESS")
         return True
     except Exception as e_tls:
-        write_auth_log("SYSTEM", f"SMTP TLS send failure: {str(e_tls)}", "ERROR")
+        write_auth_log("SYSTEM", f"SMTP TLS Port 587 transmission failed: {str(e_tls)}", "ERROR")
         return False
 
 
@@ -195,12 +218,14 @@ def api_register():
         return jsonify({"success": False, "message": "All fields are required."}), 400
 
     placeholder = "%s" if IS_POSTGRES else "?"
+    
+    # Exclusively matching and checking the email criteria footprint factor
     existing = execute_query(
-        f"SELECT username FROM users WHERE username = {placeholder} OR matric_no = {placeholder} OR email = {placeholder}",
-        (username, matric_no, email), fetch_one=True
+        f"SELECT email FROM users WHERE email = {placeholder}",
+        (email,), fetch_one=True
     )
     if existing:
-        return jsonify({"success": False, "message": "Identity components collide with pre-existing data values."}), 400
+        return jsonify({"success": False, "message": "An account matching this email mapping footprint already exists."}), 400
 
     insert_query = f"INSERT INTO users (username, password, email, full_name, matric_no) VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder})"
     execute_query(insert_query, (username, password, email, full_name, matric_no), commit=True)
@@ -225,7 +250,7 @@ def api_login():
         
         send_otp_email(email, user['full_name'], generated_otp)
         write_auth_log(username, "Primary Credential Verification", "SUCCESS")
-        return jsonify({"success": True, "user_id": user['id'], "masked_email": masked_email})
+        return jsonify({"success": True, "user_id": user['id'], "masked_email": masked_email, "expires_in": 300})
     return jsonify({"success": False, "message": "Invalid credentials."}), 401
 
 
@@ -239,13 +264,62 @@ def api_verify_otp():
         return jsonify({"success": False, "message": "No active verification handshake found."}), 400
 
     session = ACTIVE_OTP_STORE[user_id]
-    if time.time() > session['expires_at'] or session['otp'] != otp_code:
+    if time.time() > session['expires_at']:
+        return jsonify({"success": False, "message": "Verification session footprint has expired."}), 401
+        
+    if session['otp'] != otp_code:
         return jsonify({"success": False, "message": "Clearance signature verification failed."}), 401
 
     ACTIVE_OTP_STORE.pop(user_id, None)
     placeholder = "%s" if IS_POSTGRES else "?"
     user = execute_query(f"SELECT * FROM users WHERE id = {placeholder}", (user_id,), fetch_one=True)
     return jsonify({"success": True, "user_id": user['id'], "user_info": {"full_name": user['full_name'], "matric_no": user['matric_no']}})
+
+
+@app.route('/api/ratings', methods=['POST'])
+def submit_rating():
+    data = request.json or {}
+    user_id = data.get('user_id')
+    rating = data.get('rating')
+    
+    if not user_id or not rating or not (1 <= int(rating) <= 10):
+        return jsonify({"success": False, "message": "Invalid parameters configuration footprint."}), 400
+        
+    placeholder = "%s" if IS_POSTGRES else "?"
+    execute_query(
+        f"INSERT INTO ratings (user_id, rating) VALUES ({placeholder}, {placeholder})",
+        (user_id, int(rating)), commit=True
+    )
+    return jsonify({"success": True, "message": "Rating captured cleanly within system runtime infrastructure."})
+
+
+@app.route('/api/ratings/export', methods=['GET'])
+def export_ratings():
+    try:
+        # Pull ratings metrics mapping against related user details tables
+        query = '''
+            SELECT r.id, u.full_name, u.email, r.rating, r.submitted_at 
+            FROM ratings r
+            JOIN users u ON r.user_id = u.id
+            ORDER BY r.submitted_at DESC
+        '''
+        records = execute_query(query, fetch_all=True)
+        
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(['Rating ID', 'Student Full Name', 'Verified Email Address', 'Portal Metric Rating (1-10)', 'Timestamp'])
+        
+        for row in records:
+            writer.writerow([row['id'], row['full_name'], row['email'], row['rating'], row['submitted_at']])
+            
+        output.seek(0)
+        return Response(
+            output.getvalue(),
+            mimetype="text/csv",
+            headers={"Content-Disposition": "attachment; filename=daou_portal_ratings_report.csv"}
+        )
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)}), 500
 
 
 # --- Cryptographic Google Authentication Hook API Node Layer ---
