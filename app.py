@@ -204,7 +204,7 @@ def api_register():
 
     insert_query = f"INSERT INTO users (username, password, email, full_name, matric_no) VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder})"
     execute_query(insert_query, (username, password, email, full_name, matric_no), commit=True)
-    write_auth_log(username, "Direct DB Injection", "SUCCESS")
+    write_auth_log(username, "Direct DB Injection / Public Registration", "SUCCESS")
     return jsonify({"success": True})
 
 

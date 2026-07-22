@@ -139,20 +139,51 @@
                 
                 <!-- Primary Entry Layer UI -->
                 <div id="sub-login" class="panel-padding view-section active" style="padding:30px; text-align:center;">
-                    <h2 style="margin-bottom: 8px;">Sign In to Your Account</h2>
-                    <p style="color: var(--text-light); font-size: 14px; margin-bottom: 25px;">Provide your credentials or use linked Google account parameters.</p>
+                    <!-- Authentication Subtabs Toggle Layout Grid -->
+                    <div style="display: flex; justify-content: center; gap: 20px; margin-bottom: 25px; border-bottom: 1px solid var(--border); padding-bottom: 10px;">
+                        <span id="toggle-login-view" onclick="toggleAuthSubView('login')" style="cursor: pointer; font-weight: bold; color: var(--primary-hover); border-bottom: 2px solid var(--primary);">Sign In</span>
+                        <span id="toggle-register-view" onclick="toggleAuthSubView('register')" style="cursor: pointer; font-weight: bold; color: var(--text-light);">Create Account</span>
+                    </div>
+
                     <div id="login-alert" class="alert-banner"></div>
-                    <form onsubmit="executeLogin(event)">
-                        <div class="form-group">
-                            <label>Portal Username</label>
-                            <input type="text" id="login-username" required placeholder="e.g. Enoch">
-                        </div>
-                        <div class="form-group">
-                            <label>Password</label>
-                            <input type="password" id="login-password" required placeholder="••••">
-                        </div>
-                        <button type="submit" class="btn-action btn-blue" style="margin-bottom: 12px;">Sign In with Password ➔</button>
-                    </form>
+
+                    <!-- Login View Panel Interface -->
+                    <div id="panel-login-form">
+                        <h2 style="margin-bottom: 8px;">Sign In to Your Account</h2>
+                        <p style="color: var(--text-light); font-size: 14px; margin-bottom: 25px;">Provide your credentials or use linked Google account parameters.</p>
+                        <form onsubmit="executeLogin(event)">
+                            <div class="form-group">
+                                <label>Portal Username</label>
+                                <input type="text" id="login-username" required placeholder="e.g. Enoch">
+                            </div>
+                            <div class="form-group">
+                                <label>Password</label>
+                                <input type="password" id="login-password" required placeholder="••••">
+                            </div>
+                            <button type="submit" class="btn-action btn-blue" style="margin-bottom: 12px;">Sign In with Password ➔</button>
+                        </form>
+                    </div>
+
+                    <!-- Public User Registration Panel View Interface -->
+                    <div id="panel-register-form" style="display: none;">
+                        <h2 style="margin-bottom: 8px;">Portal Account Registration</h2>
+                        <p style="color: var(--text-light); font-size: 14px; margin-bottom: 25px;">Create a new identity footprint inside the DAOU structural matrix.</p>
+                        <form onsubmit="executePublicRegistration(event)">
+                            <div style="display:grid; grid-template-columns:1fr 1fr; gap:15px; margin-bottom:15px;">
+                                <div class="form-group"><label>Username</label><input type="text" id="reg-username" required placeholder="Username"></div>
+                                <div class="form-group"><label>Password</label><input type="password" id="reg-password" required placeholder="••••"></div>
+                            </div>
+                            <div class="form-group">
+                                <label>Email Address (Must match Google account for OAuth SSO)</label>
+                                <input type="email" id="reg-email" required placeholder="yourname@domain.com">
+                            </div>
+                            <div style="display:grid; grid-template-columns:1fr 1fr; gap:15px; margin-bottom:15px;">
+                                <div class="form-group"><label>Full Name</label><input type="text" id="reg-fullname" required placeholder="First Last"></div>
+                                <div class="form-group"><label>Matric No</label><input type="text" id="reg-matric" required placeholder="DA/XX/XXXX"></div>
+                            </div>
+                            <button type="submit" class="btn-action btn-green">Submit Registration Request ➔</button>
+                        </form>
+                    </div>
                     
                     <div style="margin: 15px 0; color: var(--text-light); font-size: 12px; font-weight: bold; text-transform: uppercase;">— OR —</div>
                     
@@ -335,6 +366,82 @@
 
         function closeEmailToast() {
             document.getElementById('email-notification-toast').style.display = 'none';
+        }
+
+        // Switches between Login and Registration panel modules within the primary gateway interface card
+        function toggleAuthSubView(view) {
+            const loginForm = document.getElementById('panel-login-form');
+            const registerForm = document.getElementById('panel-register-form');
+            const loginToggle = document.getElementById('toggle-login-view');
+            const registerToggle = document.getElementById('toggle-register-view');
+            const alertBanner = document.getElementById('login-alert');
+
+            if (alertBanner) alertBanner.style.display = "none";
+
+            if (view === 'login') {
+                loginForm.style.display = 'block';
+                registerForm.style.display = 'none';
+                loginToggle.style.color = 'var(--primary-hover)';
+                loginToggle.style.borderBottom = '2px solid var(--primary)';
+                registerToggle.style.color = 'var(--text-light)';
+                registerToggle.style.borderBottom = 'none';
+            } else {
+                loginForm.style.display = 'none';
+                registerForm.style.display = 'block';
+                registerToggle.style.color = 'var(--primary-hover)';
+                registerToggle.style.borderBottom = '2px solid var(--primary)';
+                loginToggle.style.color = 'var(--text-light)';
+                loginToggle.style.borderBottom = 'none';
+            }
+        }
+
+        // Executes the public customer gateway registration payload pipeline 
+        async function executePublicRegistration(e) {
+            e.preventDefault();
+            const alertBanner = document.getElementById('login-alert');
+            if (alertBanner) alertBanner.style.display = "none";
+
+            const payload = {
+                username: document.getElementById('reg-username').value.trim(),
+                password: document.getElementById('reg-password').value.trim(),
+                email: document.getElementById('reg-email').value.trim(),
+                full_name: document.getElementById('reg-fullname').value.trim(),
+                matric_no: document.getElementById('reg-matric').value.trim()
+            };
+
+            logTerminal(`Initiating public portal registration for user identity: ${payload.username}`);
+
+            try {
+                const response = await fetch('/api/register', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(payload)
+                });
+                const res = await response.json();
+
+                if (res.success) {
+                    logTerminal("<span class='term-success'>[REGISTRATION OK] Profile written safely into database engine mappings.</span>");
+                    alert("Registration successful! You can now sign in using your credentials.");
+                    
+                    // Reset fields cleanly
+                    document.getElementById('reg-username').value = '';
+                    document.getElementById('reg-password').value = '';
+                    document.getElementById('reg-email').value = '';
+                    document.getElementById('reg-fullname').value = '';
+                    document.getElementById('reg-matric').value = '';
+                    
+                    // Route user perspective directly back into sign-in form
+                    toggleAuthSubView('login');
+                } else {
+                    logTerminal(`<span class="term-warn">[REGISTRATION FAILED] ${res.message}</span>`);
+                    if (alertBanner) {
+                        alertBanner.innerText = res.message;
+                        alertBanner.style.display = "block";
+                    }
+                }
+            } catch (err) {
+                logTerminal(`<span class="term-warn">[NET ERR] Registration submission failed: ${err.message}</span>`);
+            }
         }
 
         // Processing Loop Parsing Google OAuth Returned Tokens
