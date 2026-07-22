@@ -6,43 +6,40 @@ import smtplib
 from email.mime.text import MIMEText
 from flask import Flask, request, jsonify, render_template
 
-# Google Identity Validation Modules
+# Cryptographic Federated Verification Imports
 from google.oauth2 import id_token
 from google.auth.transport import requests
 
-# Conditional import helper for deployment targets
+# Parity import layer supporting production PostgreSQL database engine shifts
 try:
     import psycopg2
-    from psycopg2.extras import RealDictRow
+    from psycopg2.extras import RealDictCursor
     HAS_POSTGRES = True
 except ImportError:
     HAS_POSTGRES = False
 
 app = Flask(__name__)
 
-# Environmental Database Router Strategy
+# Environmental Database Router System Layout Setup
 DATABASE_URL = os.environ.get('DATABASE_URL', 'database.db')
 IS_POSTGRES = DATABASE_URL.startswith("postgres://") or DATABASE_URL.startswith("postgresql://")
 
-# Operational State Control Variable
-CURRENT_SYSTEM_MODE = "user"  # Options: "user" or "admin"
-
+# System Runtime State Control Flags
+CURRENT_SYSTEM_MODE = "user"
 ACTIVE_OTP_STORE = {}
 
-# Hardcoded Admin Credentials for Secure Interface Isolation
+# Elevated Console Authentication Parameters
 ADMIN_USERNAME = "admin"
 ADMIN_PASSWORD = "DAOU_admin_2026"
 
-# ---------------------------------------------------------------------------
-# SMTP configuration (Gmail)
-# ---------------------------------------------------------------------------
+# Automated 2FA SMTP Node Variables Configuration Layout
 SMTP_HOST = os.environ.get('SMTP_HOST', 'smtp.gmail.com')
 SMTP_PORT = int(os.environ.get('SMTP_PORT', '465'))
 SMTP_USER = os.environ.get('GMAIL_USER')            
 SMTP_PASS = os.environ.get('GMAIL_APP_PASSWORD')    
 SMTP_FROM_NAME = os.environ.get('SMTP_FROM_NAME', 'DAOU University Portal')
 
-# Google OAuth Identity Client Configuration
+# Google OAuth Federation Credentials Mapping Identity Key
 GOOGLE_CLIENT_ID = os.environ.get('GOOGLE_CLIENT_ID', 'YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com')
 
 
@@ -58,7 +55,7 @@ def get_db_connection():
 
 
 def execute_query(query, params=(), fetch_one=False, fetch_all=False, commit=False):
-    """Abstraction layout utility helping query processing parity between SQLite and Postgres."""
+    """Abstraction layer utility helping query processing parity between SQLite and Postgres."""
     conn = get_db_connection()
     try:
         if IS_POSTGRES and HAS_POSTGRES:
@@ -87,7 +84,7 @@ def execute_query(query, params=(), fetch_one=False, fetch_all=False, commit=Fal
 
 
 def init_db():
-    """Initializes schema targets based on target infrastructure layout rules."""
+    """Builds the active table framework mappings cleanly if not pre-configured."""
     if IS_POSTGRES and HAS_POSTGRES:
         create_table_query = '''
             CREATE TABLE IF NOT EXISTS users (
@@ -110,25 +107,14 @@ def init_db():
                 matric_no TEXT UNIQUE NOT NULL
             )
         '''
-
-    conn = get_db_connection()
-    if IS_POSTGRES and HAS_POSTGRES:
-        cur = conn.cursor()
-        cur.execute(create_table_query)
-        conn.commit()
-    else:
-        conn.execute(create_table_query)
-        conn.commit()
-    conn.close()
+    execute_query(create_table_query, commit=True)
 
 
 def write_auth_log(username, action, status):
-    """Optional logger helper function to print server-side actions."""
     print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] MODE: {CURRENT_SYSTEM_MODE.upper()} | USER: {username} | ACTION: {action} | STATUS: {status}")
 
 
 def send_otp_email(recipient_email, full_name, otp_code):
-    """Sends the OTP to the user's real inbox over SMTP (Gmail)."""
     if not SMTP_USER or not SMTP_PASS:
         write_auth_log("SYSTEM", "SMTP credentials not configured", "ERROR")
         return False
@@ -153,7 +139,7 @@ def send_otp_email(recipient_email, full_name, otp_code):
             server.sendmail(SMTP_USER, [recipient_email], msg.as_string())
         return True
     except Exception as e_ssl:
-        write_auth_log("SYSTEM", f"SMTP SSL(465) send failure: {str(e_ssl)}", "WARN")
+        write_auth_log("SYSTEM", f"SMTP SSL send failure: {str(e_ssl)}", "WARN")
 
     try:
         with smtplib.SMTP(SMTP_HOST, 587, timeout=15) as server:
@@ -164,7 +150,7 @@ def send_otp_email(recipient_email, full_name, otp_code):
             server.sendmail(SMTP_USER, [recipient_email], msg.as_string())
         return True
     except Exception as e_tls:
-        write_auth_log("SYSTEM", f"SMTP STARTTLS(587) send failure: {str(e_tls)}", "ERROR")
+        write_auth_log("SYSTEM", f"SMTP TLS send failure: {str(e_tls)}", "ERROR")
         return False
 
 
@@ -184,185 +170,142 @@ def system_mode_switch():
             write_auth_log("SYSTEM", f"Context runtime adjusted state to: {CURRENT_SYSTEM_MODE}", "OK")
             return jsonify({"success": True, "current_mode": CURRENT_SYSTEM_MODE})
         return jsonify({"success": False, "message": "Invalid system parameters execution path."}), 400
-
     return jsonify({"success": True, "current_mode": CURRENT_SYSTEM_MODE})
 
 
 @app.route('/api/admin/login', methods=['POST'])
 def api_admin_login():
-    try:
-        data = request.json or {}
-        username = data.get('username', '').strip()
-        password = data.get('password', '').strip()
-
-        if username == ADMIN_USERNAME and password == ADMIN_PASSWORD:
-            write_auth_log("ADMIN", "Console Gateway Authentication Check", "SUCCESS")
-            return jsonify({
-                "success": True,
-                "role": "admin",
-                "message": "Elevated credentials accepted."
-            })
-
-        return jsonify({"success": False, "message": "Access Denied: Administrative footprint authorization failure."}), 401
-    except Exception as e:
-        return jsonify({"success": False, "message": str(e)}), 500
+    data = request.json or {}
+    if data.get('username') == ADMIN_USERNAME and data.get('password') == ADMIN_PASSWORD:
+        write_auth_log("ADMIN", "Console Gateway Authentication Check", "SUCCESS")
+        return jsonify({"success": True, "role": "admin"})
+    return jsonify({"success": False, "message": "Access Denied: Administrative footprint failure."}), 401
 
 
 @app.route('/api/register', methods=['POST'])
 def api_register():
-    try:
-        data = request.json or {}
-        username = data.get('username', '').strip()
-        password = data.get('password', '').strip()
-        email = data.get('email', '').strip()
-        full_name = data.get('full_name', '').strip()
-        matric_no = data.get('matric_no', '').strip()
+    data = request.json or {}
+    username = data.get('username', '').strip()
+    password = data.get('password', '').strip()
+    email = data.get('email', '').strip()
+    full_name = data.get('full_name', '').strip()
+    matric_no = data.get('matric_no', '').strip()
 
-        if not all([username, password, email, full_name, matric_no]):
-            return jsonify({"success": False, "message": "All fields are required."}), 400
+    if not all([username, password, email, full_name, matric_no]):
+        return jsonify({"success": False, "message": "All fields are required."}), 400
 
-        placeholder = "%s" if IS_POSTGRES else "?"
-        existing = execute_query(
-            f"SELECT username, matric_no FROM users WHERE username = {placeholder} OR matric_no = {placeholder} OR email = {placeholder}",
-            (username, matric_no, email),
-            fetch_one=True
-        )
+    placeholder = "%s" if IS_POSTGRES else "?"
+    existing = execute_query(
+        f"SELECT username FROM users WHERE username = {placeholder} OR matric_no = {placeholder} OR email = {placeholder}",
+        (username, matric_no, email), fetch_one=True
+    )
+    if existing:
+        return jsonify({"success": False, "message": "Identity components collide with pre-existing data values."}), 400
 
-        if existing:
-            return jsonify({"success": False, "message": "Identity components collide with pre-existing table matrix rows."}), 400
-
-        insert_query = f"INSERT INTO users (username, password, email, full_name, matric_no) VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder})"
-        execute_query(insert_query, (username, password, email, full_name, matric_no), commit=True)
-
-        write_auth_log(username, "Direct DB Injection", "SUCCESS")
-        return jsonify({"success": True, "message": "Account injected successfully."})
-
-    except Exception as e:
-        return jsonify({"success": False, "message": f"Database exception: {str(e)}"}), 500
+    insert_query = f"INSERT INTO users (username, password, email, full_name, matric_no) VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder})"
+    execute_query(insert_query, (username, password, email, full_name, matric_no), commit=True)
+    write_auth_log(username, "Direct DB Injection", "SUCCESS")
+    return jsonify({"success": True})
 
 
 @app.route('/api/login', methods=['POST'])
 def api_login():
-    try:
-        data = request.json or {}
-        username = data.get('username', '').strip()
-        password = data.get('password', '').strip()
+    data = request.json or {}
+    username = data.get('username', '').strip()
+    password = data.get('password', '').strip()
 
-        placeholder = "%s" if IS_POSTGRES else "?"
-        select_query = f"SELECT * FROM users WHERE username = {placeholder} AND password = {placeholder}"
-        user = execute_query(select_query, (username, password), fetch_one=True)
-
-        if user:
-            email = user['email']
-            parts = email.split('@')
-            masked_email = f"{parts[0][0]}{'*' * (len(parts[0]) - 2)}{parts[0][-1]}@{parts[1]}" if len(parts[0]) > 2 else f"**@{parts[1]}"
-
-            generated_otp = str(random.randint(100000, 999999))
-            ACTIVE_OTP_STORE[str(user['id'])] = {
-                "otp": generated_otp,
-                "username": username,
-                "expires_at": time.time() + 300
-            }
-
-            send_otp_email(email, user['full_name'], generated_otp)
-            write_auth_log(username, "Primary Credential Verification", "SUCCESS")
-
-            return jsonify({
-                "success": True,
-                "user_id": user['id'],
-                "masked_email": masked_email,
-                "system_context_mode": CURRENT_SYSTEM_MODE
-            })
-
-        return jsonify({"success": False, "message": "Access Denied: Invalid identity credentials."}), 401
-    except Exception as e:
-        return jsonify({"success": False, "message": f"Server processing error: {str(e)}"}), 500
+    placeholder = "%s" if IS_POSTGRES else "?"
+    user = execute_query(f"SELECT * FROM users WHERE username = {placeholder} AND password = {placeholder}", (username, password), fetch_one=True)
+    if user:
+        email = user['email']
+        parts = email.split('@')
+        masked_email = f"{parts[0][0]}{'*' * (len(parts[0]) - 2)}{parts[0][-1]}@{parts[1]}" if len(parts[0]) > 2 else f"**@{parts[1]}"
+        generated_otp = str(random.randint(100000, 999999))
+        ACTIVE_OTP_STORE[str(user['id'])] = {"otp": generated_otp, "expires_at": time.time() + 300}
+        
+        send_otp_email(email, user['full_name'], generated_otp)
+        write_auth_log(username, "Primary Credential Verification", "SUCCESS")
+        return jsonify({"success": True, "user_id": user['id'], "masked_email": masked_email})
+    return jsonify({"success": False, "message": "Invalid credentials."}), 401
 
 
 @app.route('/api/verify-otp', methods=['POST'])
 def api_verify_otp():
-    try:
-        data = request.json or {}
-        user_id = str(data.get('user_id', ''))
-        otp_code = data.get('otp_code', '').strip()
+    data = request.json or {}
+    user_id = str(data.get('user_id', ''))
+    otp_code = data.get('otp_code', '').strip()
 
-        if user_id not in ACTIVE_OTP_STORE:
-            return jsonify({"success": False, "message": "No active authentication handshake found."}), 400
+    if user_id not in ACTIVE_OTP_STORE:
+        return jsonify({"success": False, "message": "No active verification handshake found."}), 400
 
-        session = ACTIVE_OTP_STORE[user_id]
-        if time.time() > session['expires_at']:
-            ACTIVE_OTP_STORE.pop(user_id, None)
-            return jsonify({"success": False, "message": "Security clearance token expired."}), 400
+    session = ACTIVE_OTP_STORE[user_id]
+    if time.time() > session['expires_at'] or session['otp'] != otp_code:
+        return jsonify({"success": False, "message": "Clearance signature verification failed."}), 401
 
-        if session['otp'] == otp_code:
-            ACTIVE_OTP_STORE.pop(user_id, None)
-            placeholder = "%s" if IS_POSTGRES else "?"
-            user = execute_query(f"SELECT * FROM users WHERE id = {placeholder}", (user_id,), fetch_one=True)
-
-            if user:
-                write_auth_log(user['username'], "MFA Security Validation", "SUCCESS")
-                return jsonify({
-                    "success": True,
-                    "user_id": user['id'],
-                    "user_info": {"full_name": user['full_name'], "matric_no": user['matric_no']}
-                })
-
-        return jsonify({"success": False, "message": "MFA Challenge signature verification failed."}), 401
-    except Exception as e:
-        return jsonify({"success": False, "message": str(e)}), 500
+    ACTIVE_OTP_STORE.pop(user_id, None)
+    placeholder = "%s" if IS_POSTGRES else "?"
+    user = execute_query(f"SELECT * FROM users WHERE id = {placeholder}", (user_id,), fetch_one=True)
+    return jsonify({"success": True, "user_id": user['id'], "user_info": {"full_name": user['full_name'], "matric_no": user['matric_no']}})
 
 
-# ---------------------------------------------------------------------------
-# Google Identity Framework Route Ecosystem
-# ---------------------------------------------------------------------------
+# --- Cryptographic Google Authentication Hook API Node Layer ---
 @app.route('/api/auth/google', methods=['POST'])
 def api_google_auth():
-    """Validates the Google OAuth ID Token string against official Google public cert matrices."""
     try:
         data = request.json or {}
         token_string = data.get('id_token')
-
         if not token_string:
             return jsonify({"success": False, "message": "Missing Identity Proof Token Vector."}), 400
 
-        # Cryptographically verify the payload token directly using the Google validation library
         id_info = id_token.verify_oauth2_token(token_string, requests.Request(), GOOGLE_CLIENT_ID)
-
-        # Extraction parameters verification 
         user_email = id_info.get('email')
         
         placeholder = "%s" if IS_POSTGRES else "?"
-        select_query = f"SELECT * FROM users WHERE email = {placeholder}"
-        user = execute_query(select_query, (user_email,), fetch_one=True)
-
+        user = execute_query(f"SELECT * FROM users WHERE email = {placeholder}", (user_email,), fetch_one=True)
         if not user:
-            write_auth_log(user_email, "Google SSO Record Match Lookup", "UNREGISTERED_EMAIL")
-            return jsonify({
-                "success": False, 
-                "message": f"Access Denied: Verified address [{user_email}] has no registered profile on this portal matrix."
-            }), 404
+            return jsonify({"success": False, "message": f"Verified address [{user_email}] has no matrix mapping record."}), 404
 
-        write_auth_log(user['username'], "Google Federated SSO Authentication Handshake", "SUCCESS")
-        return jsonify({
-            "success": True,
-            "user_id": user['id'],
-            "user_info": {
-                "full_name": user['full_name'],
-                "matric_no": user['matric_no']
-            }
-        })
-
-    except ValueError:
-        # Invalid Token Signature Error Catching Routine
-        return jsonify({"success": False, "message": "Cryptographic structure validation failure on ID Token parameter."}), 401
+        write_auth_log(user['username'], "Google Federated SSO Handshake", "SUCCESS")
+        return jsonify({"success": True, "user_id": user['id'], "user_info": {"full_name": user['full_name'], "matric_no": user['matric_no']}})
     except Exception as e:
         return jsonify({"success": False, "message": f"Federation module exception: {str(e)}"}), 500
 
 
+# --- Elevated Administrative Oversight Management System Core API Operations ---
+@app.route('/api/admin/users', methods=['GET'])
+def admin_get_all_users():
+    try:
+        users = execute_query("SELECT id, username, email, full_name, matric_no FROM users ORDER BY id ASC", fetch_all=True)
+        return jsonify({"success": True, "users": [dict(u) for u in users]})
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)}), 500
+
+
+@app.route('/api/admin/users/update/<int:user_id>', methods=['PUT'])
+def admin_update_user(user_id):
+    try:
+        data = request.json or {}
+        full_name, matric_no, email = data.get('full_name', '').strip(), data.get('matric_no', '').strip(), data.get('email', '').strip()
+        if not all([full_name, matric_no, email]):
+            return jsonify({"success": False, "message": "Properties missing parameters data."}), 400
+
+        placeholder = "%s" if IS_POSTGRES else "?"
+        execute_query(f"UPDATE users SET full_name={placeholder}, matric_no={placeholder}, email={placeholder} WHERE id={placeholder}", (full_name, matric_no, email, user_id), commit=True)
+        return jsonify({"success": True})
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)}), 500
+
+
+@app.route('/api/admin/users/delete/<int:user_id>', methods=['DELETE'])
+def admin_delete_user(user_id):
+    try:
+        placeholder = "%s" if IS_POSTGRES else "?"
+        execute_query(f"DELETE FROM users WHERE id = {placeholder}", (user_id,), commit=True)
+        return jsonify({"success": True})
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)}), 500
+
+
 if __name__ == '__main__':
     init_db()
-    debug_mode = os.environ.get('FLASK_DEBUG', 'false').lower() == 'true'
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=debug_mode)
-else:
-    init_db()
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))

@@ -75,7 +75,7 @@
         .admin-only-panel { display: none; }
         .admin-only-panel.visible { display: block; }
 
-        .terminal { background: #1e1b15; color: #4ade80; font-family: 'Courier New', Courier, monospace; border-radius: 8px; padding: 15px; font-size: 12px; height: 250px; overflow-y: auto; text-align: left; border: 1px solid var(--border); }
+        .terminal { background: #1e1b15; color: #4ade80; font-family: 'Courier New', Courier, monospace; border-radius: 8px; padding: 15px; font-size: 12px; height: 180px; overflow-y: auto; text-align: left; border: 1px solid var(--border); margin-top: 10px; }
         .term-success { color: #4ADE80; }
         .term-warn { color: #f87171; }
         .google-btn-wrapper { display: flex; justify-content: center; margin-top: 15px; margin-bottom: 5px; }
@@ -90,11 +90,19 @@
         .email-toast-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; font-size: 11px; color: var(--text-light); font-weight: bold; text-transform: uppercase; }
         .email-toast-title { font-size: 13px; font-weight: bold; color: var(--dark); margin-bottom: 4px; }
         .email-toast-body { font-size: 13px; color: #4b5563; background: var(--light-gold); padding: 8px; border-radius: 4px; font-family: monospace; text-align: center; margin-top: 8px; }
+        
+        /* Directory Table Styling */
+        .admin-table { width: 100%; border-collapse: collapse; text-align: left; font-size: 13px; }
+        .admin-table th { background: var(--light-gold); border-bottom: 2px solid var(--border); padding: 10px; color: var(--dark); font-weight: 700; }
+        .admin-table td { padding: 10px; border-bottom: 1px solid var(--border); }
+        .action-btn { padding: 4px 8px; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 11px; font-weight: bold; }
+        
         @keyframes slideIn { from { transform: translateY(100px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
     </style>
 </head>
 <body>
 
+    <!-- secure Toast -->
     <div id="email-notification-toast" class="email-toast">
         <div class="email-toast-header">
             <span>📩 Secure Mail Notification</span>
@@ -102,11 +110,10 @@
         </div>
         <div class="email-toast-title">Sent to: <span id="toast-recipient-address"></span></div>
         <div style="font-size: 12px; color: var(--text-light);">Subject: Your DAOU Portal Security Code</div>
-        <div class="email-toast-body" style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;">
-            Check your inbox for your 6-digit OTP.
-        </div>
+        <div class="email-toast-body">Check your inbox for your 6-digit OTP.</div>
     </div>
 
+    <!-- Navigation Brand Header -->
     <div class="navbar">
         <div class="brand-zone" onclick="promptAdminModeSwitch()" title="Click to Switch Portal Mode">
             <div class="logo-placeholder">DAOU</div>
@@ -120,14 +127,17 @@
         </div>
     </div>
 
+    <!-- Main Dynamic Workspace Structure -->
     <div class="workspace" id="workspace-grid">
         <div>
+            <!-- Gateway Authentication Interface Panel -->
             <div id="auth-container" class="card view-section active">
                 <div class="portal-header">
                     <h2>🎓 DAOU Gateway Authentication</h2>
                     <div class="url-badge">daou-portal.onrender.com</div>
                 </div>
                 
+                <!-- Primary Entry Layer UI -->
                 <div id="sub-login" class="panel-padding view-section active" style="padding:30px; text-align:center;">
                     <h2 style="margin-bottom: 8px;">Sign In to Your Account</h2>
                     <p style="color: var(--text-light); font-size: 14px; margin-bottom: 25px;">Provide your credentials or use linked Google account parameters.</p>
@@ -146,10 +156,10 @@
                     
                     <div style="margin: 15px 0; color: var(--text-light); font-size: 12px; font-weight: bold; text-transform: uppercase;">— OR —</div>
                     
-                    <!-- Google Single Sign-On Injection Target -->
+                    <!-- Google SSO Frame Dynamic Anchor Target -->
                     <div class="google-btn-wrapper">
                         <div id="g_id_onload"
-                             data-client_id="1094968049844-p7g646vkmlccpjlcdnsmaq6hi2jpknd9.apps.googleusercontent.com"
+                             data-client_id="YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com"
                              data-context="signin"
                              data-ux_mode="popup"
                              data-callback="handleGoogleCredentialResponse"
@@ -166,6 +176,7 @@
                     </div>
                 </div>
 
+                <!-- 2FA OTP Clearance Entry Layer UI -->
                 <div id="sub-verify" class="panel-padding view-section" style="padding:30px; text-align:center;">
                     <h2>Multi-Factor Identity Clearance</h2>
                     <p style="color: var(--text-light); font-size: 14px; margin-bottom: 10px;">An authorization token has been safely generated for address: <strong id="masked-email"></strong></p>
@@ -181,6 +192,7 @@
                 <div class="footer-badge">Secure Layer Active: RSA-SHA256 & Google OAuth ID Token Guard</div>
             </div>
 
+            <!-- Student Dashboard Panel UI Layout -->
             <div id="main-dashboard-container" class="card view-section">
                 <div class="portal-header">
                     <h2>🎓 DAOU Edu-Portal Dashboard</h2>
@@ -193,6 +205,7 @@
                     <div class="tab" id="tab-results" onclick="switchTab('results')">📊 Check Results</div>
                 </div>
 
+                <!-- Tab Modules Layout Content Container Grid -->
                 <div class="tab-content active" id="content-profile">
                     <h3 style="margin-bottom:5px;">Identity Profile Parameters</h3>
                     <p style="font-size:12px; color:var(--text-light); margin-bottom:20px;">Core tracking identity verified inside system runtime memory matrix.</p>
@@ -227,6 +240,7 @@
             </div>
         </div>
 
+        <!-- Isolated Elevated Administration Panel Component Framework -->
         <div id="admin-panel-wrapper" class="admin-only-panel">
             <div class="card" style="padding:25px; margin-bottom:25px;">
                 <h3 style="margin-bottom:15px;">👤 Database Management: Direct Inject</h3>
@@ -247,8 +261,52 @@
                 </form>
             </div>
 
+            <!-- Directory Monitoring Data Matrix Screen -->
+            <div class="card" style="padding:25px; margin-bottom:25px; overflow-x: auto;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                    <h3>📋 Registered Matrix Directory</h3>
+                    <button onclick="refreshAdminUserTable()" class="btn-action btn-blue" style="width: auto; padding: 6px 12px; font-size: 11px;">🔄 Refresh Records</button>
+                </div>
+                <table class="admin-table">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Username</th>
+                            <th>Full Name</th>
+                            <th>Matric No</th>
+                            <th>Email Mapping</th>
+                            <th style="text-align: center;">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="admin-users-tbody">
+                        <tr>
+                            <td colspan="6" style="padding: 20px; text-align: center; color: var(--text-light);">Authorized footprint required. Click refresh to query directory loop data...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Inline Interactive Data Editing Card Frame Layout -->
+            <div id="admin-edit-modal" class="card" style="display: none; padding: 25px; border: 2px solid var(--primary); margin-bottom: 25px; background: #fffcf5;">
+                <h3 style="color: var(--primary-hover); margin-bottom: 15px;">🛠️ Modify Target Record Profile (ID: <span id="edit-display-id"></span>)</h3>
+                <input type="hidden" id="edit-user-id">
+                <div style="display:grid; grid-template-columns:1fr 1fr; gap:15px; margin-bottom:15px;">
+                    <div><label>Full Name</label><input type="text" id="edit-fullname"></div>
+                    <div><label>Matric No</label><input type="text" id="edit-matric"></div>
+                </div>
+                <div class="form-group">
+                    <label>Email Address</label>
+                    <input type="email" id="edit-email">
+                </div>
+                <div style="display: flex; gap: 10px; justify-content: flex-end;">
+                    <button onclick="closeEditModal()" class="btn-action btn-dark" style="margin:0; background:#6b7280;">Cancel</button>
+                    <button onclick="submitRecordModification()" class="btn-action btn-blue" style="width: auto; padding: 10px 20px;">Save Profile Changes</button>
+                </div>
+            </div>
+
+            <!-- Monitoring Logging Telemetry Terminal Terminal -->
             <div class="card" style="padding:25px;">
-                <h3 style="margin-bottom:15px;">📋 Monitoring Module</h3>
+                <h3>📋 System Activity Log</h3>
                 <div class="terminal" id="terminal-screen">
                     <div>> System handshake loops active. Ready for registration pipelines.</div>
                     <div class="term-warn">> Waiting for incoming auth configuration profiles...</div>
@@ -257,6 +315,7 @@
         </div>
     </div>
 
+    <!-- Interface Script Logic Control Framework Matrix -->
     <script>
         let cachedUserData = null;
         let isAdminAuthenticated = false;
@@ -271,15 +330,14 @@
 
         function triggerEmailToastDelivery(recipient) {
             document.getElementById('toast-recipient-address').innerText = recipient;
-            const toast = document.getElementById('email-notification-toast');
-            toast.style.display = 'block';
+            document.getElementById('email-notification-toast').style.display = 'block';
         }
 
         function closeEmailToast() {
             document.getElementById('email-notification-toast').style.display = 'none';
         }
 
-        // Handle structural payload returned by Google SSO
+        // Processing Loop Parsing Google OAuth Returned Tokens
         async function handleGoogleCredentialResponse(response) {
             const alertBanner = document.getElementById('login-alert');
             if (alertBanner) alertBanner.style.display = "none";
@@ -341,6 +399,7 @@
                         document.getElementById('system-mode-indicator').style.background = "var(--success)";
                         document.getElementById('system-mode-indicator').style.color = "white";
                         logTerminal("<span class='term-success'>[ADMIN AUTH] Telemetry terminal display enabled.</span>");
+                        refreshAdminUserTable();
                     } else {
                         alert(res.message || "Invalid Authorization Footprint.");
                     }
@@ -359,6 +418,94 @@
                 });
             } catch (err) {
                 console.error("Failed to sync structural mode parameters with backend engine.", err);
+            }
+        }
+
+        // Live Directory Management Table Operations Loader Hooks
+        async function refreshAdminUserTable() {
+            logTerminal("Requesting live infrastructure database snapshot arrays...");
+            try {
+                const response = await fetch('/api/admin/users');
+                const res = await response.json();
+                
+                if (!res.success) throw new Error(res.message);
+                
+                const tbody = document.getElementById('admin-users-tbody');
+                tbody.innerHTML = '';
+                
+                res.users.forEach(u => {
+                    const safeUserJson = JSON.stringify(u).replace(/"/g, '&quot;');
+                    tbody.innerHTML += `
+                        <tr>
+                            <td style="font-family: monospace;">${u.id}</td>
+                            <td style="font-weight: bold;">${u.username}</td>
+                            <td>${u.full_name}</td>
+                            <td style="font-family: monospace;">${u.matric_no}</td>
+                            <td>${u.email}</td>
+                            <td style="display: flex; gap: 8px; justify-content: center;">
+                                <button onclick="openEditModal(${safeUserJson})" class="action-btn" style="background: var(--primary);">Edit</button>
+                                <button onclick="deleteRecordProfile(${u.id})" class="action-btn" style="background: #ef4444;">Delete</button>
+                            </td>
+                        </tr>
+                    `;
+                });
+                logTerminal(`<span class='term-success'>[FETCH OK] Synchronized ${res.users.length} active identity records.</span>`);
+            } catch(err) {
+                logTerminal(`<span class="term-warn">[FETCH ERR] Sync aborted: ${err.message}</span>`);
+            }
+        }
+
+        function openEditModal(userObj) {
+            document.getElementById('edit-user-id').value = userObj.id;
+            document.getElementById('edit-display-id').innerText = userObj.id;
+            document.getElementById('edit-fullname').value = userObj.full_name;
+            document.getElementById('edit-matric').value = userObj.matric_no;
+            document.getElementById('edit-email').value = userObj.email;
+            document.getElementById('admin-edit-modal').style.display = 'block';
+        }
+
+        function closeEditModal() {
+            document.getElementById('admin-edit-modal').style.display = 'none';
+        }
+
+        async function submitRecordModification() {
+            const userId = document.getElementById('edit-user-id').value;
+            const payload = {
+                full_name: document.getElementById('edit-fullname').value,
+                matric_no: document.getElementById('edit-matric').value,
+                email: document.getElementById('edit-email').value
+            };
+            
+            try {
+                const response = await fetch(`/api/admin/users/update/${userId}`, {
+                    method: 'PUT',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(payload)
+                });
+                const res = await response.json();
+                if (res.success) {
+                    logTerminal("<span class='term-success'>[UPDATE SUCCESS] Structural row modifications saved.</span>");
+                    closeEditModal();
+                    refreshAdminUserTable();
+                } else {
+                    alert(res.message);
+                }
+            } catch(err) {
+                logTerminal(`<span class="term-warn">[JS ERR] Put sequence broken: ${err.message}</span>`);
+            }
+        }
+
+        async function deleteRecordProfile(userId) {
+            if (!confirm(`Purge profile row matrix ID: ${userId} permanently out of database parameters?`)) return;
+            try {
+                const response = await fetch(`/api/admin/users/delete/${userId}`, { method: 'DELETE' });
+                const res = await response.json();
+                if (res.success) {
+                    logTerminal(`<span class="term-warn">[PURGE COMPLETED] Removed row matching identifier ID ${userId}.</span>`);
+                    refreshAdminUserTable();
+                }
+            } catch(err) {
+                console.error(err);
             }
         }
 
@@ -386,8 +533,9 @@
                 });
                 const res = await response.json();
                 if(res.success) {
-                    logTerminal(`<span class="term-success">[DB OK] Row injected successfully.</span>`);
+                    logTerminal("<span class='term-success'>[DB OK] Row injected successfully.</span>");
                     alert("Account injected into database!");
+                    refreshAdminUserTable();
                 } else {
                     logTerminal(`<span class="term-warn">[DB ERR] ${res.message}</span>`);
                 }
@@ -426,8 +574,7 @@
                     document.getElementById('sub-login').classList.remove('active');
                     document.getElementById('sub-verify').classList.add('active');
                     
-                    logTerminal(`<span class="term-success">[SUCCESS] Password validated. OTP dispatched to registered email address.</span>`);
-                    
+                    logTerminal("<span class='term-success'>[SUCCESS] Password validated. OTP dispatched to registered email address.</span>");
                     triggerEmailToastDelivery(res.masked_email);
                 } else {
                     logTerminal(`<span class="term-warn">[AUTH FAILED] ${res.message}</span>`);
@@ -475,7 +622,7 @@
         }
 
         function completeSuccessfulLogin(res) {
-            logTerminal(`<span class="term-success">[CLEARANCE SUCCESS] Handshake authorized. Displaying dashboard parameters.</span>`);
+            logTerminal("<span class='term-success'>[CLEARANCE SUCCESS] Handshake authorized. Displaying dashboard parameters.</span>");
             cachedUserData = { user_id: res.user_id };
             
             document.getElementById('dash-fullname').value = res.user_info.full_name;
