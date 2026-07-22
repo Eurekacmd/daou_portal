@@ -219,7 +219,6 @@ def api_register():
 
     placeholder = "%s" if IS_POSTGRES else "?"
     
-    # Exclusively matching and checking the email criteria footprint factor
     existing = execute_query(
         f"SELECT email FROM users WHERE email = {placeholder}",
         (email,), fetch_one=True
@@ -278,25 +277,38 @@ def api_verify_otp():
 
 @app.route('/api/ratings', methods=['POST'])
 def submit_rating():
-    data = request.json or {}
-    user_id = data.get('user_id')
-    rating = data.get('rating')
-    
-    if not user_id or not rating or not (1 <= int(rating) <= 10):
-        return jsonify({"success": False, "message": "Invalid parameters configuration footprint."}), 400
+    """Type-safe execution endpoint framework securely tracking dashboard metric payloads."""
+    try:
+        data = request.json or {}
+        user_id = data.get('user_id')
+        rating = data.get('rating')
         
-    placeholder = "%s" if IS_POSTGRES else "?"
-    execute_query(
-        f"INSERT INTO ratings (user_id, rating) VALUES ({placeholder}, {placeholder})",
-        (user_id, int(rating)), commit=True
-    )
-    return jsonify({"success": True, "message": "Rating captured cleanly within system runtime infrastructure."})
+        if user_id is None or rating is None:
+            return jsonify({"success": False, "message": "Missing required data framework parameters."}), 400
+            
+        try:
+            rating_val = int(rating)
+            user_id_val = int(user_id)
+        except ValueError:
+            return jsonify({"success": False, "message": "Parameters must be valid integers."}), 400
+            
+        if not (1 <= rating_val <= 10):
+            return jsonify({"success": False, "message": "Invalid parameters configuration footprint rating must be 1-10."}), 400
+            
+        placeholder = "%s" if IS_POSTGRES else "?"
+        execute_query(
+            f"INSERT INTO ratings (user_id, rating) VALUES ({placeholder}, {placeholder})",
+            (user_id_val, rating_val), commit=True
+        )
+        return jsonify({"success": True, "message": "Rating captured cleanly within system runtime infrastructure."})
+    except Exception as e:
+        write_auth_log("SYSTEM/RATINGS", f"Pipeline Exception occurred: {str(e)}", "ERROR")
+        return jsonify({"success": False, "message": "Internal data engine error processing payload submission."}), 500
 
 
 @app.route('/api/ratings/export', methods=['GET'])
 def export_ratings():
     try:
-        # Pull ratings metrics mapping against related user details tables
         query = '''
             SELECT r.id, u.full_name, u.email, r.rating, r.submitted_at 
             FROM ratings r
@@ -322,7 +334,6 @@ def export_ratings():
         return jsonify({"success": False, "message": str(e)}), 500
 
 
-# --- Cryptographic Google Authentication Hook API Node Layer ---
 @app.route('/api/auth/google', methods=['POST'])
 def api_google_auth():
     try:
@@ -345,7 +356,6 @@ def api_google_auth():
         return jsonify({"success": False, "message": f"Federation module exception: {str(e)}"}), 500
 
 
-# --- Elevated Administrative Oversight Management System Core API Operations ---
 @app.route('/api/admin/users', methods=['GET'])
 def admin_get_all_users():
     try:

@@ -183,7 +183,6 @@
                                 <div class="form-group"><label>Full Name</label><input type="text" id="reg-fullname" required placeholder="First Last"></div>
                                 <div class="form-group"><label>Matric No</label><input type="text" id="reg-matric" required placeholder="DA/XX/XXXX"></div>
                             </div>
-                            <!-- Clean integration of Student Registration Sign Up Action button Component -->
                             <button type="submit" id="btn-register-signup" class="btn-action btn-green">Register & Sign Up ➔</button>
                         </form>
                     </div>
@@ -241,7 +240,6 @@
                     <div class="tab active" id="tab-profile" onclick="switchTab('profile')">📇 Profile</div>
                     <div class="tab" id="tab-course" onclick="switchTab('course')">📝 Course Registration</div>
                     <div class="tab" id="tab-results" onclick="switchTab('results')">📊 Check Results</div>
-                    <!-- Ratings Evaluation Component Module View Tab Trigger -->
                     <div class="tab" id="tab-ratings" onclick="switchTab('ratings')">⭐ Portal Ratings</div>
                 </div>
 
@@ -438,7 +436,6 @@
             }
         }
 
-        // Active countdown timer handling mechanism
         function initiateTimerCountdown(secondsRemaining) {
             clearInterval(activeCountdownInterval);
             const timerNode = document.getElementById('otp-timer-node');
@@ -733,7 +730,6 @@
                     document.getElementById('sub-login').classList.remove('active');
                     document.getElementById('sub-verify').classList.add('active');
                     
-                    // Activate active countdown mapping context frame logic nodes
                     initiateTimerCountdown(res.expires_in);
                     
                     logTerminal("<span class='term-success'>[SUCCESS] Password validated. OTP dispatched to registered email address.</span>");
@@ -784,7 +780,6 @@
             }
         }
 
-        // Submits feedback metrics via REST channel pipelines
         async function submitPortalRating(e) {
             e.preventDefault();
             const selectElement = document.getElementById('portal-rating-select');
@@ -799,10 +794,18 @@
                 const response = await fetch('/api/ratings', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ user_id: cachedUserData.user_id, rating: ratingValue })
+                    body: JSON.stringify({ 
+                        user_id: parseInt(cachedUserData.user_id, 10), 
+                        rating: parseInt(ratingValue, 10) 
+                    })
                 });
-                const res = await response.json();
                 
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({ message: `HTTP ${response.status} Server Error` }));
+                    throw new Error(errorData.message);
+                }
+                
+                const res = await response.json();
                 if (res.success) {
                     alert("Thank you! Your metric rating score has been recorded into the dataset tracking index.");
                     selectElement.value = "";
@@ -810,13 +813,16 @@
                     alert(res.message);
                 }
             } catch(err) {
-                alert("Ratings payload transmission error.");
+                console.error("Payload Transmission details:", err);
+                alert(`Ratings payload transmission error: ${err.message || 'Check browser terminal console logs.'}`);
             }
         }
 
         function completeSuccessfulLogin(res) {
             logTerminal("<span class='term-success'>[CLEARANCE SUCCESS] Handshake authorized. Displaying dashboard parameters.</span>");
-            cachedUserData = { user_id: res.user_id };
+            
+            // FIX: Retain entire response object array fields
+            cachedUserData = res;
             
             document.getElementById('dash-fullname').value = res.user_info.full_name;
             document.getElementById('dash-matric').value = res.user_info.matric_no;
