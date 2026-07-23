@@ -3,7 +3,9 @@ import random
 import time
 import csv
 import io
-from flask import Flask, jsonify, request, Response, stream_with_context, render_template
+import secrets
+from datetime import datetime
+from flask import Flask, jsonify, request, Response, stream_with_context, render_template, make_response
 
 app = Flask(__name__)
 
@@ -23,6 +25,9 @@ PENDING_OTP_VALIDATIONS = {}
 PORTAL_RATINGS = []
 SYSTEM_RUNTIME_MODE = "user"
 TELEMETRY_LISTENERS = []
+
+# In-Memory Active Sessions Table for Multi-Device Tracking
+USER_SESSIONS_DB = []
 
 # --- STRUCTURAL ENGINE UTILITIES ---
 def generate_matric_number():
@@ -52,6 +57,18 @@ class TelemetryQueue:
         if self.messages:
             return self.messages.pop(0)
         return None
+
+# --- REQUEST HOOK FOR ACTIVITY TRACKING ---
+
+@app.before_request
+def update_user_activity():
+    """Updates the last_active timestamp for the current device session token."""
+    session_token = request.cookies.get('device_session_token')
+    if session_token:
+        for session in USER_SESSIONS_DB:
+            if session['session_token'] == session_token:
+                session['last_active'] = time.time()
+                break
 
 # --- FRONTEND TEMPLATE ROUTE ---
 
@@ -159,16 +176,37 @@ def handle_otp_verification():
     del PENDING_OTP_VALIDATIONS[user_id]
     user = next((u for u in USERS_DB if u['id'] == user_id), None)
     
-    emit_telemetry(f"<span class='term-success'>[LOGIN COMPLETE] MFA clearance passed for target {user['username']}.</span>")
+    # --- MULTI-DEVICE SESSION CREATION ---
+    session_token = secrets.token_hex(32)
+    ip_address = request.remote_addr or "127.0.0.1"
+    user_agent = request.headers.get('User-Agent', 'Unknown Browser')
+    device_name = "Mobile Device" if "Mobile" in user_agent else "Desktop Browser"
+
+    session_entry = {
+        "id": len(USER_SESSIONS_DB) + 1,
+        "user_id": user['id'],
+        "session_token": session_token,
+        "ip_address": ip_address,
+        "device_name": device_name,
+        "created_at": time.time(),
+        "last_active": time.time()
+    }
+    USER_SESSIONS_DB.append(session_entry)
+
+    emit_telemetry(f"<span class='term-success'>[LOGIN COMPLETE] MFA clearance passed for target {user['username']} from {device_name} ({ip_address}).</span>")
     
-    return jsonify({
+    resp_data = {
         "success": True,
         "user_id": user['id'],
         "user_info": {
             "full_name": user['full_name'],
             "matric_no": user['matric_no']
         }
-    })
+    }
+    
+    response = make_response(jsonify(resp_data))
+    response.set_cookie('device_session_token', session_token, httponly=True, secure=False, samesite='Lax')
+    return response
 
 @app.route('/api/auth/google', methods=['POST'])
 def handle_google_oauth():
@@ -181,14 +219,92 @@ def handle_google_oauth():
     emit_telemetry("<span class='term-success'>[GOOGLE LOGIN] Parsing inbound federated token payload signatures.</span>")
     
     user = USERS_DB[0] 
-    return jsonify({
+    
+    # --- MULTI-DEVICE SESSION CREATION FOR GOOGLE OAUTH ---
+    session_token = secrets.token_hex(32)
+    ip_address = request.remote_addr or "127.0.0.1"
+    user_agent = request.headers.get('User-Agent', 'Unknown Browser')
+    device_name = "Mobile Device" if "Mobile" in user_agent else "Desktop Browser"
+
+    session_entry = {
+        "id": len(USER_SESSIONS_DB) + 1,
+        "user_id": user['id'],
+        "session_token": session_token,
+        "ip_address": ip_address,
+        "device_name": device_name,
+        "created_at": time.time(),
+        "last_active": time.time()
+    }
+    USER_SESSIONS_DB.append(session_entry)
+
+    resp_data = {
         "success": True,
         "user_id": user['id'],
         "user_info": {
             "full_name": user['full_name'],
             "matric_no": user['matric_no']
         }
-    })
+    }
+    response = make_response(jsonify(resp_data))
+    response.set_cookie('device_session_token', session_token, httponly=True, secure=False, samesite='Lax')
+    return response
+
+# --- MULTI-DEVICE MONITORING ENDPOINTS ---
+
+@app.route('/api/user/active-devices', methods=['GET'])
+def get_active_devices():
+    """Retrieves all active device sessions and status metrics for the authenticated user."""
+    session_token = request.cookies.get('device_session_token')
+    if not session_token:
+        return jsonify({"success": False, "message": "Unauthorized session context."}), 401
+
+    current_session = next((s for s in USER_SESSIONS_DB if s['session_token'] == session_token), None)
+    if not current_session:
+        return jsonify({"success": False, "message": "Session footprint invalid or expired."}), 401
+
+    user_id = current_session['user_id']
+    user_sessions = [s for s in USER_SESSIONS_DB if s['user_id'] == user_id]
+
+    device_list = []
+    current_time = time.time()
+
+    for s in user_sessions:
+        time_diff = current_time - s['last_active']
+        is_online = time_diff < 300  # Online if active within the last 5 minutes
+
+        device_list.append({
+            "session_id": s['id'],
+            "device_name": s['device_name'],
+            "ip_address": s['ip_address'],
+            "created_at": time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(s['created_at'])),
+            "last_active": time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(s['last_active'])),
+            "status": "Online" if is_online else "Away / Offline",
+            "is_current_device": s['session_token'] == session_token
+        })
+
+    return jsonify({"success": True, "devices": device_list})
+
+@app.route('/api/user/revoke-session/<int:session_id>', methods=['DELETE'])
+def revoke_specific_session(session_id):
+    """Terminates a specific device session remotely."""
+    global USER_SESSIONS_DB
+    session_token = request.cookies.get('device_session_token')
+    if not session_token:
+        return jsonify({"success": False, "message": "Unauthorized."}), 401
+
+    current_session = next((s for s in USER_SESSIONS_DB if s['session_token'] == session_token), None)
+    if not current_session:
+        return jsonify({"success": False, "message": "Unauthorized."}), 401
+
+    # Ensure target session belongs to the same user
+    target_session = next((s for s in USER_SESSIONS_DB if s['id'] == session_id and s['user_id'] == current_session['user_id']), None)
+    if not target_session:
+        return jsonify({"success": False, "message": "Target session not found."}), 404
+
+    USER_SESSIONS_DB = [s for s in USER_SESSIONS_DB if s['id'] != session_id]
+    emit_telemetry(f"<span class='term-warn'>[SESSION REVOKED] Remote termination executed on session ID: {session_id}</span>")
+    
+    return jsonify({"success": True, "message": "Session terminated successfully."})
 
 # --- USER LAND INTERACTIVE ENDPOINTS ---
 
