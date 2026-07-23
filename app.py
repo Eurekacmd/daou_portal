@@ -365,7 +365,7 @@ def api_google_auth():
         write_auth_log(user['username'], "Google Federated SSO Handshake", "SUCCESS")
         return jsonify({"success": True, "user_id": user['id'], "user_info": {"full_name": user['full_name'], "matric_no": user['matric_no']}})
     except Exception as e:
-        return jsonify({"success": False, "message": f"Federation module exception: {str(e)}"}), 500
+        return jsonify({"success": False, "message": f"Federation module exception: {str(e)}", "SUCCESS": False}), 500
 
 
 @app.route('/api/admin/users', methods=['GET'])
@@ -402,6 +402,9 @@ def admin_delete_user(user_id):
         return jsonify({"success": False, "message": str(e)}), 500
 
 
+# Instantiating schema structural bindings globally so production 
+# application servers (like Gunicorn) run it immediately upon import layer execution.
+init_db()
+
 if __name__ == '__main__':
-    init_db()
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
