@@ -330,7 +330,7 @@
             <div class="card" style="margin-bottom: 30px;">
                 <div class="portal-header" style="background: linear-gradient(135deg, var(--card-bg) 0%, #eefbee 100%); border-bottom: 2px solid var(--success);">
                     <h2>⚙️ DAOU Elevated System Administration Terminal</h2>
-                    <button class="btn-action btn-dark" onclick="triggerSignOut()" style="margin: 0; padding: 8px 16px; font-size: 12px;">📤 Close Admin Session</button>
+                    <button class="btn-action btn-dark" onclick="triggerCloseAdminSession()" style="margin: 0; padding: 8px 16px; font-size: 12px;">📤 Close Admin Session</button>
                 </div>
             </div>
 
@@ -433,15 +433,16 @@
         let activeCountdownInterval = null;
         let adminSseConnection = null;
 
-        window.addEventListener('DOMContentLoaded', () => {
+        window.addEventListener('DOMContentLoaded', async () => {
             const preservedUser = localStorage.getItem('daou_user_session');
             const preservedAdmin = localStorage.getItem('daou_admin_session');
 
-            if (preservedUser) {
+            if (preservedAdmin === 'true') {
+                await setBackendSystemMode('admin');
+                launchAdministrativeDashboard();
+            } else if (preservedUser) {
                 cachedUserData = JSON.parse(preservedUser);
                 completeSuccessfulLogin(cachedUserData);
-            } else if (preservedAdmin === 'true') {
-                launchAdministrativeDashboard();
             }
         });
 
@@ -765,6 +766,7 @@
 
                 if (res.success) {
                     if (res.is_admin) {
+                        await setBackendSystemMode('admin');
                         launchAdministrativeDashboard();
                     } else {
                         cachedUserData = res;
@@ -872,6 +874,28 @@
             document.getElementById('auth-container').classList.remove('active');
             document.getElementById('main-dashboard-container').classList.add('active');
             switchTab('profile');
+        }
+
+        async function triggerCloseAdminSession() {
+            isAdminAuthenticated = false;
+            localStorage.removeItem('daou_admin_session');
+            
+            if (adminSseConnection) {
+                adminSseConnection.close();
+            }
+
+            await setBackendSystemMode("user");
+            
+            document.getElementById('admin-dashboard-container').classList.remove('active');
+            document.getElementById('sub-login').classList.add('active');
+            document.getElementById('auth-container').classList.add('active');
+            
+            document.getElementById('system-mode-indicator').innerText = "User Mode";
+            document.getElementById('system-mode-indicator').style.background = "var(--light-gold)";
+            document.getElementById('system-mode-indicator').style.color = "var(--primary-hover)";
+            
+            document.getElementById('login-username').value = '';
+            document.getElementById('login-password').value = '';
         }
 
         async function triggerSignOut() {
