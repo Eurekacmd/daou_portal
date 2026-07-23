@@ -398,9 +398,6 @@ def set_system_mode():
 
 @app.route('/api/admin/users', methods=['GET'])
 def get_admin_user_directory():
-    global SYSTEM_RUNTIME_MODE
-    SYSTEM_RUNTIME_MODE = "admin"
-    
     db.session.expire_all()
     users = UserModel.query.all()
     
@@ -416,9 +413,6 @@ def get_admin_user_directory():
 
 @app.route('/api/admin/inject-user', methods=['POST'])
 def admin_inject_user():
-    global SYSTEM_RUNTIME_MODE
-    SYSTEM_RUNTIME_MODE = "admin"
-
     data = request.json or {}
     username = data.get('username', '').strip()
     password = data.get('password', '').strip()
@@ -452,9 +446,6 @@ def admin_inject_user():
 
 @app.route('/api/admin/users/update/<int:user_id>', methods=['PUT'])
 def update_user_profile(user_id):
-    global SYSTEM_RUNTIME_MODE
-    SYSTEM_RUNTIME_MODE = "admin"
-
     data = request.json or {}
     user = UserModel.query.get(user_id)
     
@@ -472,9 +463,6 @@ def update_user_profile(user_id):
 
 @app.route('/api/admin/users/delete/<int:user_id>', methods=['DELETE'])
 def delete_user_profile(user_id):
-    global SYSTEM_RUNTIME_MODE
-    SYSTEM_RUNTIME_MODE = "admin"
-
     user = UserModel.query.get(user_id)
     if user:
         db.session.delete(user)
@@ -526,7 +514,7 @@ with app.app_context():
             password_hash=generate_password_hash("password"),
             full_name="Enoch Ola",
             matric_no="DAOU/CYB/2026/001",
-            email="enochstudent@daou.edu.ng"
+            email="student@gmail.com"
         )
         db.session.add(default_user)
         db.session.commit()
