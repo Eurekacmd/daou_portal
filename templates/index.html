@@ -73,7 +73,6 @@
         .form-group label { display: block; text-transform: uppercase; font-size: 11px; font-weight: 700; color: var(--text-light); margin-bottom: 8px; }
         input, select { width: 100%; padding: 12px 14px; border: 1px solid var(--border); border-radius: 6px; font-size: 14px; background-color: var(--card-bg); color: var(--dark); }
 
-        /* Integrated Password Vector Fields Setup */
         .password-input-container { position: relative; display: flex; align-items: center; }
         .password-input-container input { padding-right: 45px; }
         .password-eye-toggle { position: absolute; right: 14px; cursor: pointer; user-select: none; font-size: 16px; color: var(--text-light); }
@@ -93,7 +92,7 @@
 
         .terminal { background: #1e1b15; color: #4ade80; font-family: 'Courier New', Courier, monospace; border-radius: 8px; padding: 15px; font-size: 12px; height: 180px; overflow-y: auto; text-align: left; border: 1px solid var(--border); margin-top: 10px; }
         .term-success { color: #4ADE80; }
-        .term-warn { color: #box-shadow; color: #f87171; }
+        .term-warn { color: #f87171; }
         .google-btn-wrapper { display: flex; justify-content: center; margin-top: 15px; margin-bottom: 5px; }
 
         .timer-display { font-size: 14px; color: var(--danger); font-weight: bold; margin-top: 10px; background: rgba(185, 28, 28, 0.1); padding: 8px; border-radius: 6px; display: inline-block; }
@@ -114,6 +113,11 @@
         .admin-table td { padding: 10px; border-bottom: 1px solid var(--border); }
         .action-btn { padding: 4px 8px; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 11px; font-weight: bold; }
         
+        /* Status Badges */
+        .status-badge { display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: bold; text-transform: uppercase; }
+        .status-online { background: #dcfce7; color: #15803d; border: 1px solid #bbf7d0; }
+        .status-offline { background: #f3f4f6; color: #4b5563; border: 1px solid #e5e7eb; }
+
         @keyframes slideIn { from { transform: translateY(100px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
     </style>
 </head>
@@ -375,13 +379,14 @@
                             <th>Username</th>
                             <th>Full Name</th>
                             <th>Matric No</th>
-                            <th>Email Mapping</th>
+                            <th>Status</th>
+                            <th>Last Active</th>
                             <th style="text-align: center;">Actions</th>
                         </tr>
                     </thead>
                     <tbody id="admin-users-tbody">
                         <tr>
-                            <td colspan="6" style="padding: 20px; text-align: center; color: var(--text-light);">Authorized footprint required. Click refresh to query directory loop data...</td>
+                            <td colspan="7" style="padding: 20px; text-align: center; color: var(--text-light);">Authorized footprint required. Click refresh to query directory loop data...</td>
                         </tr>
                     </tbody>
                 </table>
@@ -423,7 +428,6 @@
         let activeCountdownInterval = null;
         let adminSseConnection = null;
 
-        // Persistent Handshake Session Checks On Load Iteration
         window.addEventListener('DOMContentLoaded', () => {
             const preservedUser = localStorage.getItem('daou_user_session');
             const preservedAdmin = localStorage.getItem('daou_admin_session');
@@ -462,8 +466,8 @@
             
             adminSseConnection.onmessage = function(event) {
                 logTerminal(event.data);
-                // Dynamically intercept real-time login event tags to push directory changes instantly
-                if (event.data.includes('[LOGIN COMPLETE]') || event.data.includes('[GOOGLE LOGIN]') || event.data.includes('[REGISTRATION]')) {
+                // Catch any real-time session mutations to force live tracking updates immediately
+                if (event.data.includes('[LOGIN COMPLETE]') || event.data.includes('[GOOGLE LOGIN]') || event.data.includes('[REGISTRATION]') || event.data.includes('[SIGNOUT]')) {
                     refreshAdminUserTable();
                 }
             };
@@ -596,6 +600,7 @@
                 if (data.success) {
                     logTerminal("<span class='term-success'>[GOOGLE AUTH OK] Integrity footprint verified.</span>");
                     completeSuccessfulLogin(data);
+                    if (isAdminAuthenticated) refreshAdminUserTable();
                 } else {
                     logTerminal(`<span class="term-warn">[OAUTH ERROR] ${data.message}</span>`);
                     if (alertBanner) {
@@ -679,13 +684,21 @@
                 
                 res.users.forEach(u => {
                     const safeUserJson = JSON.stringify(u).replace(/"/g, '&quot;');
+                    
+                    // Standardize status parameters cleanly
+                    const isOnline = !!u.is_active;
+                    const statusClass = isOnline ? 'status-online' : 'status-offline';
+                    const statusText = isOnline ? 'Online' : 'Offline';
+                    const lastActiveFormatted = u.last_active ? new Date(u.last_active).toLocaleString() : 'Never';
+
                     tbody.innerHTML += `
                         <tr>
                             <td style="font-family: monospace;">${u.id}</td>
                             <td style="font-weight: bold;">${u.username}</td>
                             <td>${u.full_name}</td>
                             <td style="font-family: monospace;">${u.matric_no}</td>
-                            <td>${u.email}</td>
+                            <td><span class="status-badge ${statusClass}">${statusText}</span></td>
+                            <td style="font-family: monospace; font-size: 12px;">${lastActiveFormatted}</td>
                             <td style="display: flex; gap: 8px; justify-content: center;">
                                 <button onclick="openEditModal(${safeUserJson})" class="action-btn" style="background: var(--primary);">Edit</button>
                                 <button onclick="deleteRecordProfile(${u.id})" class="action-btn" style="background: #ef4444;">Delete</button>
@@ -851,6 +864,7 @@
                     clearInterval(activeCountdownInterval);
                     closeEmailToast();
                     completeSuccessfulLogin(res);
+                    if (isAdminAuthenticated) refreshAdminUserTable();
                 } else {
                     logTerminal(`<span class="term-warn">[2FA FAILED] ${res.message}</span>`);
                     if (alertBanner) {
@@ -914,7 +928,6 @@
             logTerminal("<span class='term-success'>[CLEARANCE SUCCESS] Handshake authorized. Displaying dashboard parameters.</span>");
             cachedUserData = res;
             
-            // Push active authenticated dataset payload token to persistent state engine
             localStorage.setItem('daou_user_session', JSON.stringify(res));
             
             document.getElementById('dash-fullname').value = res.user_info.full_name;
@@ -929,8 +942,20 @@
             switchTab('profile');
         }
 
-        function triggerSignOut() {
+        async function triggerSignOut() {
             clearInterval(activeCountdownInterval);
+            
+            // Explicitly notify the backend thread to drop activity maps cleanly if server requires it
+            if (cachedUserData && cachedUserData.user_id) {
+                try {
+                    await fetch('/api/logout', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ user_id: cachedUserData.user_id })
+                    });
+                } catch(e) { console.warn("Logout sync omitted or unmapped on endpoint.", e); }
+            }
+
             cachedUserData = null;
             localStorage.removeItem('daou_user_session');
             document.getElementById('otp-code').value = '';
@@ -940,6 +965,7 @@
             document.getElementById('auth-container').classList.add('active');
             closeEmailToast();
             logTerminal("Active authorization tokens cleared.");
+            if (isAdminAuthenticated) refreshAdminUserTable();
         }
     </script>
 </body>
