@@ -181,7 +181,6 @@ def send_otp_email_task(self, recipient_email, full_name, otp_code):
                 server.sendmail(SMTP_USER, [recipient_email], msg.as_string())
             return True
         except Exception as e_tls:
-            # If both fail due to Render's free tier limits or strict firewall configurations, retry automatically
             raise self.retry(exc=e_tls)
 
 
@@ -255,7 +254,6 @@ def api_login():
         generated_otp = str(random.randint(100000, 999999))
         ACTIVE_OTP_STORE[str(user['id'])] = {"otp": generated_otp, "expires_at": time.time() + 300}
         
-        # Enqueue the task asynchronously to Celery Redis Broker
         send_otp_email_task.delay(email, user['full_name'], generated_otp)
         
         write_auth_log(username, "Primary Credential Verification -> Offloaded to Celery Queue", "SUCCESS")
@@ -317,6 +315,11 @@ def submit_rating():
 
 @app.route('/api/ratings/export', methods=['GET'])
 def export_ratings():
+    """Restricted Endpoint: Validates the elevated administrative footprint before parsing the dataset."""
+    global CURRENT_SYSTEM_MODE
+    if CURRENT_SYSTEM_MODE != "admin":
+        return jsonify({"success": False, "message": "Unauthorized Access: Extraction engine requires administrative runtime signature verification."}), 403
+        
     try:
         query = '''
             SELECT r.id, u.full_name, u.email, r.rating, r.submitted_at 

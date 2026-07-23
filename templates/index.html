@@ -36,6 +36,15 @@
         .brand-text h1 { font-size: 20px; font-weight: 700; color: var(--primary-hover); }
         .brand-text p { font-size: 11px; color: var(--text-light); text-transform: uppercase; }
         
+        /* Navigation Controls Design */
+        .nav-history-controls { display: flex; align-items: center; gap: 8px; margin-right: 15px; }
+        .nav-arrow-btn { 
+            width: 32px; height: 32px; border-radius: 50%; border: 1px solid var(--border); 
+            background: var(--card-bg); color: var(--primary-hover); font-size: 16px; font-weight: bold; 
+            cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.2s;
+        }
+        .nav-arrow-btn:hover { background: var(--light-gold); border-color: var(--primary); }
+        
         .system-mode-badge {
             font-size: 11px; font-weight: bold; padding: 4px 8px; border-radius: 4px;
             background: var(--light-gold); color: var(--primary-hover); text-transform: uppercase;
@@ -127,7 +136,12 @@
                 <p>STUDENT & STAFF PORTAL SECURED WITH EMAIL 2FA & GOOGLE AUTH</p>
             </div>
         </div>
-        <div>
+        <div style="display: flex; align-items: center;">
+            <!-- Back and Forth Navigation Arrows -->
+            <div class="nav-history-controls">
+                <button class="nav-arrow-btn" onclick="window.history.back()" title="Go Back">←</button>
+                <button class="nav-arrow-btn" onclick="window.history.forward()" title="Go Forward">→</button>
+            </div>
             <span class="system-mode-badge" id="system-mode-indicator">User Mode</span>
         </div>
     </div>
@@ -308,7 +322,8 @@
                     <div style="margin-top: 30px; padding-top: 20px; border-top: 1px dashed var(--border);">
                         <h4>📊 Spreadsheet Extraction Engine Data Pipeline</h4>
                         <p style="font-size: 12px; color: var(--text-light); margin-bottom: 15px;">Download a generated `.csv` spreadsheet tracking matrix records compilation layout directly from the live SQL server.</p>
-                        <a href="/api/ratings/export" class="btn-action btn-green" style="width: auto; display: inline-flex; text-decoration: none; padding: 12px 24px;">📥 Download Ratings Spreadsheet (.CSV)</a>
+                        <!-- Added validation check tracking directly to download layout handler -->
+                        <a href="#" onclick="handleCSVDownloadLink(event)" class="btn-action btn-green" style="width: auto; display: inline-flex; text-decoration: none; padding: 12px 24px;">📥 Download Ratings Spreadsheet (.CSV)</a>
                     </div>
                 </div>
             </div>
@@ -820,10 +835,20 @@
             }
         }
 
+        /* Front-facing Gatekeeper verifying Admin context values before triggering the endpoint download vector loop */
+        function handleCSVDownloadLink(e) {
+            e.preventDefault();
+            if (!isAdminAuthenticated) {
+                alert("Extraction Engine Blocked: Spreadsheet generation requires administrative mode workspace parameters.");
+                return;
+            }
+            window.location.href = "/api/ratings/export";
+        }
+
         function completeSuccessfulLogin(res) {
             logTerminal("<span class='term-success'>[CLEARANCE SUCCESS] Handshake authorized. Displaying dashboard parameters.</span>");
             
-            // FIX: Retain entire response object array fields
+            // FIX: Successfully mapping the base response payload variables array directly to memory context
             cachedUserData = res;
             
             document.getElementById('dash-fullname').value = res.user_info.full_name;
