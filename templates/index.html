@@ -113,7 +113,7 @@
         .admin-table td { padding: 10px; border-bottom: 1px solid var(--border); }
         .action-btn { padding: 4px 8px; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 11px; font-weight: bold; }
         
-        /* Status Badges */
+        /* New Status Badges styling */
         .status-badge { display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: bold; text-transform: uppercase; }
         .status-online { background: #dcfce7; color: #15803d; border: 1px solid #bbf7d0; }
         .status-offline { background: #f3f4f6; color: #4b5563; border: 1px solid #e5e7eb; }
@@ -366,7 +366,7 @@
                 </form>
             </div>
 
-            <!-- Directory Monitoring Data Matrix Screen -->
+            <!-- Directory Monitoring Data Matrix Screen (UPGRADED FOR ACTIVITY TELEMETRY) -->
             <div class="card" style="padding:25px; margin-bottom:25px; overflow-x: auto;">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
                     <h3>📋 Registered Matrix Directory</h3>
@@ -466,7 +466,7 @@
             
             adminSseConnection.onmessage = function(event) {
                 logTerminal(event.data);
-                // Catch any real-time session mutations to force live tracking updates immediately
+                // Dynamically intercept authentication changes to keep active lists current
                 if (event.data.includes('[LOGIN COMPLETE]') || event.data.includes('[GOOGLE LOGIN]') || event.data.includes('[REGISTRATION]') || event.data.includes('[SIGNOUT]')) {
                     refreshAdminUserTable();
                 }
@@ -672,6 +672,7 @@
             }
         }
 
+        // Updated Table Engine mapping backend values to live badges and timestamps
         async function refreshAdminUserTable() {
             logTerminal("Requesting live infrastructure database snapshot arrays...");
             try {
@@ -685,7 +686,7 @@
                 res.users.forEach(u => {
                     const safeUserJson = JSON.stringify(u).replace(/"/g, '&quot;');
                     
-                    // Standardize status parameters cleanly
+                    // Structural Evaluation of Status Parameters
                     const isOnline = !!u.is_active;
                     const statusClass = isOnline ? 'status-online' : 'status-offline';
                     const statusText = isOnline ? 'Online' : 'Offline';
@@ -708,7 +709,7 @@
                 });
                 logTerminal(`<span class='term-success'>[FETCH OK] Synchronized ${res.users.length} active identity records.</span>`);
             } catch(err) {
-                logTerminal(`<span class="term-warn">[FETCH ERR] Sync aborted: ${err.message}</span>`);
+                logTerminal(`<span class="font-weight: bold; color: #ef4444;">[FETCH ERR] Sync aborted: ${err.message}</span>`);
             }
         }
 
@@ -945,7 +946,6 @@
         async function triggerSignOut() {
             clearInterval(activeCountdownInterval);
             
-            // Explicitly notify the backend thread to drop activity maps cleanly if server requires it
             if (cachedUserData && cachedUserData.user_id) {
                 try {
                     await fetch('/api/logout', {
