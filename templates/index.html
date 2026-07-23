@@ -28,7 +28,7 @@
             display: flex; justify-content: space-between; align-items: center;
             border-bottom: 4px solid var(--primary); box-shadow: 0 4px 10px rgba(0,0,0,0.03);
         }
-        .brand-zone { display: flex; align-items: center; gap: 15px; user-select: none; }
+        .brand-zone { display: flex; align-items: center; gap: 15px; cursor: pointer; user-select: none; }
         .logo-placeholder {
             width: 45px; height: 45px; border-radius: 50%; border: 2px dashed var(--primary);
             display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: bold; color: var(--primary);
@@ -113,10 +113,6 @@
         .admin-table td { padding: 10px; border-bottom: 1px solid var(--border); }
         .action-btn { padding: 4px 8px; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 11px; font-weight: bold; }
         
-        .status-badge { display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: bold; text-transform: uppercase; }
-        .status-online { background: #dcfce7; color: #15803d; border: 1px solid #bbf7d0; }
-        .status-offline { background: #f3f4f6; color: #4b5563; border: 1px solid #e5e7eb; }
-
         @keyframes slideIn { from { transform: translateY(100px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
     </style>
 </head>
@@ -133,9 +129,9 @@
         <div class="email-toast-body">Check your inbox for your 6-digit OTP.</div>
     </div>
 
-    <!-- Navigation Brand Header (Hidden Prompt Trigger Removed) -->
+    <!-- Navigation Brand Header -->
     <div class="navbar">
-        <div class="brand-zone">
+        <div class="brand-zone" onclick="promptAdminModeSwitch()" title="Click to Switch Portal Mode">
             <div class="logo-placeholder">DAOU</div>
             <div class="brand-text">
                 <h1>DAOU UNIVERSITY</h1>
@@ -332,7 +328,7 @@
             </div>
         </div>
 
-        <!-- Elevated Administration Panel Framework Component -->
+        <!-- Isolated Elevated Administration Panel Framework Component -->
         <div id="admin-panel-wrapper" class="admin-only-panel">
             <div class="card" style="padding:25px; margin-bottom:25px; border: 2px solid var(--success); background: #f4fbf4;">
                 <h3 style="color: var(--success); margin-bottom: 8px;">📊 Spreadsheet Extraction Engine Data Pipeline</h3>
@@ -378,14 +374,13 @@
                             <th>Username</th>
                             <th>Full Name</th>
                             <th>Matric No</th>
-                            <th>Status</th>
-                            <th>Last Active</th>
+                            <th>Email Mapping</th>
                             <th style="text-align: center;">Actions</th>
                         </tr>
                     </thead>
                     <tbody id="admin-users-tbody">
                         <tr>
-                            <td colspan="7" style="padding: 20px; text-align: center; color: var(--text-light);">Authorized footprint required. Directory data loops synchronized.</td>
+                            <td colspan="6" style="padding: 20px; text-align: center; color: var(--text-light);">Authorized footprint required. Click refresh to query directory loop data...</td>
                         </tr>
                     </tbody>
                 </table>
@@ -417,12 +412,10 @@
                     <div class="term-warn">> Waiting for incoming auth configuration profiles...</div>
                 </div>
             </div>
-            
-            <!-- Central Admin Sign Out Area -->
-            <button class="btn-action btn-dark" onclick="triggerAdminSignOut()" style="margin-top: 20px; width: 100%;">📤 Close Administrative Console Session</button>
         </div>
     </div>
 
+    <!-- Interface Script Logic Control Framework Matrix -->
     <script>
         let cachedUserData = null;
         let isAdminAuthenticated = false;
@@ -439,7 +432,16 @@
             }
 
             if (preservedAdmin === 'true') {
-                activateAdminWorkspaceLayout();
+                isAdminAuthenticated = true;
+                setBackendSystemMode("admin").then(() => {
+                    document.getElementById('admin-panel-wrapper').classList.add('visible');
+                    document.getElementById('workspace-grid').classList.add('admin-layout');
+                    document.getElementById('system-mode-indicator').innerText = "Admin Mode Active";
+                    document.getElementById('system-mode-indicator').style.background = "var(--success)";
+                    document.getElementById('system-mode-indicator').style.color = "white";
+                    refreshAdminUserTable();
+                    initializeAdminLiveTelemetry();
+                });
             }
         });
 
@@ -450,46 +452,6 @@
             }
         }
 
-        function activateAdminWorkspaceLayout() {
-            isAdminAuthenticated = true;
-            localStorage.setItem('daou_admin_session', 'true');
-            
-            // UI Component Transformations
-            document.getElementById('auth-container').classList.remove('active');
-            document.getElementById('main-dashboard-container').classList.remove('active');
-            document.getElementById('admin-panel-wrapper').classList.add('visible');
-            document.getElementById('workspace-grid').classList.add('admin-layout');
-            
-            const modeBadge = document.getElementById('system-mode-indicator');
-            modeBadge.innerText = "Admin Mode Active";
-            modeBadge.style.background = "var(--success)";
-            modeBadge.style.color = "white";
-            
-            setBackendSystemMode("admin");
-            refreshAdminUserTable();
-            initializeAdminLiveTelemetry();
-        }
-
-        function triggerAdminSignOut() {
-            isAdminAuthenticated = false;
-            localStorage.removeItem('daou_admin_session');
-            if (adminSseConnection) {
-                adminSseConnection.close();
-            }
-            setBackendSystemMode("user");
-            document.getElementById('admin-panel-wrapper').classList.remove('visible');
-            document.getElementById('workspace-grid').classList.remove('admin-layout');
-            
-            const modeBadge = document.getElementById('system-mode-indicator');
-            modeBadge.innerText = "User Mode";
-            modeBadge.style.background = "var(--light-gold)";
-            modeBadge.style.color = "var(--primary-hover)";
-            
-            document.getElementById('sub-login').classList.add('active');
-            document.getElementById('auth-container').classList.add('active');
-            logTerminal("Administrative workspace environment contexts cleared.");
-        }
-
         function initializeAdminLiveTelemetry() {
             if (adminSseConnection) {
                 adminSseConnection.close();
@@ -498,7 +460,7 @@
             
             adminSseConnection.onmessage = function(event) {
                 logTerminal(event.data);
-                if (event.data.includes('[LOGIN COMPLETE]') || event.data.includes('[GOOGLE LOGIN]') || event.data.includes('[REGISTRATION]') || event.data.includes('[SIGNOUT]')) {
+                if (event.data.includes('[LOGIN COMPLETE]') || event.data.includes('[GOOGLE LOGIN]') || event.data.includes('[REGISTRATION]')) {
                     refreshAdminUserTable();
                 }
             };
@@ -573,79 +535,6 @@
             activeCountdownInterval = setInterval(refreshTimerView, 1000);
         }
 
-        async function executeLogin(e) {
-            e.preventDefault();
-            const alertBanner = document.getElementById('login-alert');
-            if (alertBanner) alertBanner.style.display = "none";
-            
-            const userVal = document.getElementById('login-username').value.trim();
-            const passVal = document.getElementById('login-password').value;
-
-            // Direct Route Hijacking: Check for Explicit Admin Credentials
-            if (userVal === "admin" && passVal === "Eureka") {
-                logTerminal("<span class='term-success'>[ADMIN KEY MATCHED] Direct login routing triggered for administrative terminal...</span>");
-                
-                try {
-                    const response = await fetch('/api/admin/login', {
-                        method: 'POST',
-                        headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({ username: 'admin', password: 'password' }) // Submits authorized internal payload mapping
-                    });
-                    const res = await response.json();
-                    if (res.success) {
-                        activateAdminWorkspaceLayout();
-                        logTerminal("<span class='term-success'>[ADMIN AUTH] Administrative session created successfully via credentials login form.</span>");
-                    } else {
-                        throw new Error(res.message);
-                    }
-                } catch (err) {
-                    // Fallback to local rendering override frame block if API route constraints differ internally
-                    activateAdminWorkspaceLayout();
-                    logTerminal("<span class='term-success'>[ADMIN BYPASS] Local console activated via hardcoded credentials setup.</span>");
-                }
-                return;
-            }
-
-            // Normal Student Pipeline Logic
-            logTerminal(`Initiating credentials checking loop for user tracking: ${userVal}`);
-            try {
-                const response = await fetch('/api/login', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ username: userVal, password: passVal })
-                });
-                if (!response.ok) {
-                    const errorData = await response.json();
-                    throw new Error(errorData.message || `Server responded with status ${response.status}`);
-                }
-                const res = await response.json();
-
-                if (res.success) {
-                    cachedUserData = res;
-                    document.getElementById('masked-email').innerText = res.masked_email;
-                    document.getElementById('sub-login').classList.remove('active');
-                    document.getElementById('sub-verify').classList.add('active');
-                    
-                    initiateTimerCountdown(res.expires_in);
-                    
-                    logTerminal("<span class='term-success'>[SUCCESS] Password validated instantly. Async thread dispatched OTP to mailbox.</span>");
-                    triggerEmailToastDelivery(res.masked_email);
-                } else {
-                    logTerminal(`<span class="term-warn">[AUTH FAILED] ${res.message}</span>`);
-                    if (alertBanner) {
-                        alertBanner.innerText = res.message;
-                        alertBanner.style.display = "block";
-                    }
-                }
-            } catch (err) {
-                logTerminal(`<span class="term-warn">[SERVER CRASH / NET ERR] ${err.message}</span>`);
-                if (alertBanner) {
-                    alertBanner.innerText = "System connection failure. Check backend terminal console logs.";
-                    alertBanner.style.display = "block";
-                }
-            }
-        }
-
         async function executePublicRegistration(e) {
             e.preventDefault();
             const alertBanner = document.getElementById('login-alert');
@@ -704,7 +593,6 @@
                 if (data.success) {
                     logTerminal("<span class='term-success'>[GOOGLE AUTH OK] Integrity footprint verified.</span>");
                     completeSuccessfulLogin(data);
-                    if (isAdminAuthenticated) refreshAdminUserTable();
                 } else {
                     logTerminal(`<span class="term-warn">[OAUTH ERROR] ${data.message}</span>`);
                     if (alertBanner) {
@@ -714,6 +602,54 @@
                 }
             } catch (err) {
                 logTerminal(`<span class="term-warn">[OAUTH NET ERR] ${err.message}</span>`);
+            }
+        }
+
+        async function promptAdminModeSwitch() {
+            if (isAdminAuthenticated) {
+                isAdminAuthenticated = false;
+                localStorage.removeItem('daou_admin_session');
+                if (adminSseConnection) {
+                    adminSseConnection.close();
+                }
+                await setBackendSystemMode("user");
+                // Structural Correctness Fix: Clean workspace wrapper classes cleanly on return
+                document.getElementById('admin-panel-wrapper').classList.remove('visible');
+                document.getElementById('workspace-grid').classList.remove('admin-layout');
+                document.getElementById('system-mode-indicator').innerText = "User Mode";
+                document.getElementById('system-mode-indicator').style.background = "var(--light-gold)";
+                document.getElementById('system-mode-indicator').style.color = "var(--primary-hover)";
+                alert("Returned to standard User View Mode.");
+            } else {
+                const pass = prompt("Enter Administration Access Key to view backend telemetry modules:");
+                if (!pass) return;
+
+                try {
+                    const response = await fetch('/api/admin/login', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ username: 'admin', password: pass })
+                    });
+                    const res = await response.json();
+
+                    if (res.success) {
+                        isAdminAuthenticated = true;
+                        localStorage.setItem('daou_admin_session', 'true');
+                        await setBackendSystemMode("admin");
+                        document.getElementById('admin-panel-wrapper').classList.add('visible');
+                        document.getElementById('workspace-grid').classList.add('admin-layout');
+                        document.getElementById('system-mode-indicator').innerText = "Admin Mode Active";
+                        document.getElementById('system-mode-indicator').style.background = "var(--success)";
+                        document.getElementById('system-mode-indicator').style.color = "white";
+                        logTerminal("<span class='term-success'>[ADMIN AUTH] Telemetry terminal display enabled.</span>");
+                        refreshAdminUserTable();
+                        initializeAdminLiveTelemetry();
+                    } else {
+                        alert(res.message || "Invalid Authorization Footprint.");
+                    }
+                } catch (err) {
+                    alert("Authentication transmission failure.");
+                }
             }
         }
 
@@ -741,20 +677,13 @@
                 
                 res.users.forEach(u => {
                     const safeUserJson = JSON.stringify(u).replace(/"/g, '&quot;');
-                    
-                    const isOnline = !!u.is_active;
-                    const statusClass = isOnline ? 'status-online' : 'status-offline';
-                    const statusText = isOnline ? 'Online' : 'Offline';
-                    const lastActiveFormatted = u.last_active ? new Date(u.last_active).toLocaleString() : 'Never';
-
                     tbody.innerHTML += `
                         <tr>
                             <td style="font-family: monospace;">${u.id}</td>
                             <td style="font-weight: bold;">${u.username}</td>
                             <td>${u.full_name}</td>
                             <td style="font-family: monospace;">${u.matric_no}</td>
-                            <td><span class="status-badge ${statusClass}">${statusText}</span></td>
-                            <td style="font-family: monospace; font-size: 12px;">${lastActiveFormatted}</td>
+                            <td>${u.email}</td>
                             <td style="display: flex; gap: 8px; justify-content: center;">
                                 <button onclick="openEditModal(${safeUserJson})" class="action-btn" style="background: var(--primary);">Edit</button>
                                 <button onclick="deleteRecordProfile(${u.id})" class="action-btn" style="background: #ef4444;">Delete</button>
@@ -764,7 +693,7 @@
                 });
                 logTerminal(`<span class='term-success'>[FETCH OK] Synchronized ${res.users.length} active identity records.</span>`);
             } catch(err) {
-                logTerminal(`<span class="font-weight: bold; color: #ef4444;">[FETCH ERR] Sync aborted: ${err.message}</span>`);
+                logTerminal(`<span class="term-warn">[FETCH ERR] Sync aborted: ${err.message}</span>`);
             }
         }
 
@@ -852,6 +781,53 @@
                 }
             } catch (err) {
                 logTerminal(`<span class="term-warn">[JS ERR] Injection failed: ${err.message}</span>`);
+            }
+        }
+
+        async function executeLogin(e) {
+            e.preventDefault();
+            const alertBanner = document.getElementById('login-alert');
+            if (alertBanner) alertBanner.style.display = "none";
+            
+            const userVal = document.getElementById('login-username').value;
+            const passVal = document.getElementById('login-password').value;
+
+            logTerminal(`Initiating credentials checking loop for user tracking: ${userVal}`);
+            try {
+                const response = await fetch('/api/login', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ username: userVal, password: passVal })
+                });
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.message || `Server responded with status ${response.status}`);
+                }
+                const res = await response.json();
+
+                if (res.success) {
+                    cachedUserData = res;
+                    document.getElementById('masked-email').innerText = res.masked_email;
+                    document.getElementById('sub-login').classList.remove('active');
+                    document.getElementById('sub-verify').classList.add('active');
+                    
+                    initiateTimerCountdown(res.expires_in);
+                    
+                    logTerminal("<span class='term-success'>[SUCCESS] Password validated instantly. Async thread dispatched OTP to mailbox.</span>");
+                    triggerEmailToastDelivery(res.masked_email);
+                } else {
+                    logTerminal(`<span class="term-warn">[AUTH FAILED] ${res.message}</span>`);
+                    if (alertBanner) {
+                        alertBanner.innerText = res.message;
+                        alertBanner.style.display = "block";
+                    }
+                }
+            } catch (err) {
+                logTerminal(`<span class="term-warn">[SERVER CRASH / NET ERR] ${err.message}</span>`);
+                if (alertBanner) {
+                    alertBanner.innerText = "System connection failure. Check backend terminal console logs.";
+                    alertBanner.style.display = "block";
+                }
             }
         }
 
@@ -950,19 +926,8 @@
             switchTab('profile');
         }
 
-        async function triggerSignOut() {
+        function triggerSignOut() {
             clearInterval(activeCountdownInterval);
-            
-            if (cachedUserData && cachedUserData.user_id) {
-                try {
-                    await fetch('/api/logout', {
-                        method: 'POST',
-                        headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({ user_id: cachedUserData.user_id })
-                    });
-                } catch(e) { console.warn("Logout sync omitted or unmapped on endpoint.", e); }
-            }
-
             cachedUserData = null;
             localStorage.removeItem('daou_user_session');
             document.getElementById('otp-code').value = '';
