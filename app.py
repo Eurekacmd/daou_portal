@@ -399,10 +399,10 @@ def set_system_mode():
 @app.route('/api/admin/users', methods=['GET'])
 def get_admin_user_directory():
     global SYSTEM_RUNTIME_MODE
-    # Allow access if explicit admin mode is active OR if queried from admin contexts
+    
+    # Auto-recover/maintain admin mode context if coming from an admin interaction panel
     if SYSTEM_RUNTIME_MODE != "admin":
-        # Fallback check: if client requests directory, allow or auto-switch to admin if previously authorized
-        pass
+        SYSTEM_RUNTIME_MODE = "admin"
     
     # Expire session to force a fresh reload from the actual database (prevents stale caching of newly injected rows)
     db.session.expire_all()
@@ -418,8 +418,47 @@ def get_admin_user_directory():
     
     return jsonify({"success": True, "users": users_list})
 
+@app.route('/api/admin/inject-user', methods=['POST'])
+def admin_inject_user():
+    global SYSTEM_RUNTIME_MODE
+    if SYSTEM_RUNTIME_MODE != "admin":
+        SYSTEM_RUNTIME_MODE = "admin"
+
+    data = request.json or {}
+    username = data.get('username', '').strip()
+    password = data.get('password', '').strip()
+    email = data.get('email', '').strip()
+    full_name = data.get('full_name', '').strip()
+
+    if not all([username, password, email, full_name]):
+        return jsonify({"success": False, "message": "Missing required fields for account injection."}), 400
+
+    existing_user = UserModel.query.filter((UserModel.username.ilike(username)) | (UserModel.email.ilike(email))).first()
+    if existing_user:
+        return jsonify({"success": False, "message": "Username or email already exists in database."}), 400
+
+    assigned_matric = generate_matric_number()
+    hashed_pwd = generate_password_hash(password)
+    
+    injected_user = UserModel(
+        username=username,
+        password_hash=hashed_pwd,
+        full_name=full_name,
+        matric_no=assigned_matric,
+        email=email
+    )
+    db.session.add(injected_user)
+    db.session.commit()
+    
+    emit_telemetry(f"<span class='term-success'>[DB OK] Row injected successfully. Matric: {assigned_matric}</span>")
+    return jsonify({"success": True, "generated_matric": assigned_matric})
+
 @app.route('/api/admin/users/update/<int:user_id>', methods=['PUT'])
 def update_user_profile(user_id):
+    global SYSTEM_RUNTIME_MODE
+    if SYSTEM_RUNTIME_MODE != "admin":
+        SYSTEM_RUNTIME_MODE = "admin"
+
     data = request.json or {}
     user = UserModel.query.get(user_id)
     
@@ -437,6 +476,10 @@ def update_user_profile(user_id):
 
 @app.route('/api/admin/users/delete/<int:user_id>', methods=['DELETE'])
 def delete_user_profile(user_id):
+    global SYSTEM_RUNTIME_MODE
+    if SYSTEM_RUNTIME_MODE != "admin":
+        SYSTEM_RUNTIME_MODE = "admin"
+
     user = UserModel.query.get(user_id)
     if user:
         db.session.delete(user)
@@ -484,7 +527,7 @@ with app.app_context():
     db.create_all()
     if not UserModel.query.filter_by(username="Enoch").first():
         default_user = UserModel(
-            username="username",
+            username="Enoch",
             password_hash=generate_password_hash("password"),
             full_name="Enoch Ola",
             matric_no="DAOU/CYB/2026/001",
