@@ -50,6 +50,20 @@ SMTP_FROM_NAME = os.environ.get('SMTP_FROM_NAME', 'DAOU University Portal')
 GOOGLE_CLIENT_ID = os.environ.get('GOOGLE_CLIENT_ID', 'YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com')
 
 
+def get_remote_context():
+    """Extracts true remote client IP address and device summaries from proxy networks."""
+    if not request:
+        return "SYSTEM", "INTERNAL"
+    
+    # Check X-Forwarded-For header array for Render production parity, fallback to default remote address
+    ip_address = request.headers.get('X-Forwarded-For', request.remote_addr).split(',')[0].strip()
+    user_agent = request.headers.get('User-Agent', 'Unknown Device')
+    
+    # Strip down long browser user-agents into a concise footprint summary
+    device_summary = user_agent.split(')')[0] + ')' if '(' in user_agent else user_agent[:30]
+    return ip_address, device_summary
+
+
 def broadcast_system_event(msg_text):
     """Pushes runtime authentication event alerts instantly to all open Admin SSE data pipelines."""
     for client_queue in LIVE_ADMIN_QUEUES:
@@ -144,7 +158,9 @@ def init_db():
 
 
 def write_auth_log(username, action, status):
-    print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] MODE: {CURRENT_SYSTEM_MODE.upper()} | USER: {username} | ACTION: {action} | STATUS: {status}")
+    ip, device = get_remote_context()
+    print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] MODE: {CURRENT_SYSTEM_MODE.upper()} "
+          f"| IP: {ip} | DEVICE: {device} | USER: {username} | ACTION: {action} | STATUS: {status}")
 
 
 def send_otp_email_thread(recipient_email, full_name, otp_code):
@@ -210,10 +226,15 @@ def system_mode_switch():
 @app.route('/api/admin/login', methods=['POST'])
 def api_admin_login():
     data = request.json or {}
+    ip, device = get_remote_context()
     if data.get('username') == ADMIN_USERNAME and data.get('password') == ADMIN_PASSWORD:
         write_auth_log("ADMIN", "Console Gateway Authentication Check", "SUCCESS")
-        broadcast_system_event("<span class='term-success'>[ADMIN LOGIN] Elevated console authorization handshake verified.</span>")
+        broadcast_system_event(f"<span class='term-success'>[ADMIN LOGIN] Elevated console handshake verified.<br>"
+                               f"📍 Origin: <code>{ip}</code> | 💻 Device: <em>{device}</em></span>")
         return jsonify({"success": True, "role": "admin"})
+    
+    broadcast_system_event(f"<span class='term-warn'>[ADMIN FAILED] Unauthorized console access attempt!<br>"
+                           f"🚨 Source: <code>{ip}</code></span>")
     return jsonify({"success": False, "message": "Access Denied: Administrative footprint failure."}), 401
 
 
@@ -277,8 +298,10 @@ def api_register():
         (generated_matric, new_id), commit=True
     )
 
+    ip, device = get_remote_context()
     write_auth_log(username, f"Public Registration | Auto Matric: {generated_matric}", "SUCCESS")
-    broadcast_system_event(f"<span class='term-success'>[REGISTRATION] New profile entry initialized for user: <strong>{username}</strong> ({generated_matric}).</span>")
+    broadcast_system_event(f"<span class='term-success'>[REGISTRATION] Profile entry initialized for user: <strong>{username}</strong> ({generated_matric}).<br>"
+                           f"📍 Context: <code>{ip}</code> | 💻 Device: <em>{device}</em></span>")
     return jsonify({"success": True, "generated_matric": generated_matric})
 
 
@@ -288,6 +311,7 @@ def api_login():
     username = data.get('username', '').strip()
     password = data.get('password', '').strip()
 
+    ip, device = get_remote_context()
     placeholder = "%s" if IS_POSTGRES else "?"
     user = execute_query(f"SELECT * FROM users WHERE username = {placeholder} AND password = {placeholder}", (username, password), fetch_one=True)
     if user:
@@ -305,10 +329,12 @@ def api_login():
         ).start()
         
         write_auth_log(username, "Primary Credential Verification -> Offloaded to Thread Loop", "SUCCESS")
-        broadcast_system_event(f"<span>[LOGIN ATTEMPT] User <strong>{username}</strong> verified primary credentials. Out-of-band 2FA dispatch processing...</span>")
+        broadcast_system_event(f"<span>[LOGIN ATTEMPT] User <strong>{username}</strong> verified primary credentials.<br>"
+                               f"📍 Origin: <code>{ip}</code> | 💻 Device: <em>{device}</em></span>")
         return jsonify({"success": True, "user_id": user['id'], "masked_email": masked_email, "expires_in": 300})
     
-    broadcast_system_event(f"<span class='term-warn'>[AUTH FAILED] Rejected login parameters attempted for username: <strong>{username}</strong></span>")
+    broadcast_system_event(f"<span class='term-warn'>[AUTH FAILED] Rejected login parameters for username: <strong>{username}</strong><br>"
+                           f"🚨 Source IP: <code>{ip}</code> | Device: <em>{device}</em></span>")
     return jsonify({"success": False, "message": "Invalid credentials."}), 401
 
 
@@ -318,6 +344,7 @@ def api_verify_otp():
     user_id = str(data.get('user_id', ''))
     otp_code = data.get('otp_code', '').strip()
 
+    ip, device = get_remote_context()
     if user_id not in ACTIVE_OTP_STORE:
         return jsonify({"success": False, "message": "No active verification handshake found."}), 400
 
@@ -326,14 +353,17 @@ def api_verify_otp():
         return jsonify({"success": False, "message": "Verification session footprint has expired."}), 401
         
     if session['otp'] != otp_code:
-        broadcast_system_event("<span class='term-warn'>[2FA FAILED] Erroneous verification token rejected at authorization portal interface.</span>")
+        broadcast_system_event(f"<span class='term-warn'>[2FA FAILED] Erroneous verification token rejected.<br>"
+                               f"🚨 Attempt Origin: <code>{ip}</code></span>")
         return jsonify({"success": False, "message": "Clearance signature verification failed."}), 401
 
     ACTIVE_OTP_STORE.pop(user_id, None)
     placeholder = "%s" if IS_POSTGRES else "?"
     user = execute_query(f"SELECT * FROM users WHERE id = {placeholder}", (user_id,), fetch_one=True)
     
-    broadcast_system_event(f"<span class='term-success'>[LOGIN COMPLETE] User <strong>{user['username']}</strong> passed 2FA checks. Session opened.</span>")
+    write_auth_log(user['username'], "2FA Code Verification", "SUCCESS")
+    broadcast_system_event(f"<span class='term-success'>[LOGIN COMPLETE] User <strong>{user['username']}</strong> passed 2FA checks. Session opened.<br>"
+                           f"📍 Active Device: <code>{ip}</code> ({device})</span>")
     return jsonify({"success": True, "user_id": user['id'], "user_info": {"full_name": user['full_name'], "matric_no": user['matric_no']}})
 
 
@@ -411,13 +441,17 @@ def api_google_auth():
         id_info = id_token.verify_oauth2_token(token_string, requests.Request(), GOOGLE_CLIENT_ID)
         user_email = id_info.get('email')
         
+        ip, device = get_remote_context()
         placeholder = "%s" if IS_POSTGRES else "?"
         user = execute_query(f"SELECT * FROM users WHERE email = {placeholder}", (user_email,), fetch_one=True)
         if not user:
+            broadcast_system_event(f"<span class='term-warn'>[GOOGLE FAILED] SSO map mismatch for [{user_email}].<br>"
+                                   f"🚨 Target IP: <code>{ip}</code></span>")
             return jsonify({"success": False, "message": f"Verified address [{user_email}] has no matrix mapping record."}), 404
 
         write_auth_log(user['username'], "Google Federated SSO Handshake", "SUCCESS")
-        broadcast_system_event(f"<span class='term-success'>[GOOGLE LOGIN] User <strong>{user['username']}</strong> signed in via federated OAuth proof token.</span>")
+        broadcast_system_event(f"<span class='term-success'>[GOOGLE LOGIN] User <strong>{user['username']}</strong> signed in via federated OAuth proof token.<br>"
+                               f"📍 Origin: <code>{ip}</code> | 💻 Device: <em>{device}</em></span>")
         return jsonify({"success": True, "user_id": user['id'], "user_info": {"full_name": user['full_name'], "matric_no": user['matric_no']}})
     except Exception as e:
         return jsonify({"success": False, "message": f"Federation module exception: {str(e)}", "SUCCESS": False}), 500
