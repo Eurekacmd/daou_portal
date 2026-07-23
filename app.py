@@ -91,6 +91,17 @@ def handle_login():
     username = data.get('username', '').strip()
     password = data.get('password', '').strip()
 
+    # Intercept Hardcoded Administration Credentials
+    if username == "Admin" and password == "Eureka":
+        global SYSTEM_RUNTIME_MODE
+        SYSTEM_RUNTIME_MODE = "admin"
+        emit_telemetry("<span class='term-success'>[ADMIN LOGIN] Administrative dashboard accessed successfully.</span>")
+        return jsonify({
+            "success": True,
+            "is_admin": True,
+            "message": "Admin authorization granted."
+        })
+
     user = next((u for u in USERS_DB if u['username'].lower() == username.lower()), None)
     
     if not user or user['password'] != password:
@@ -112,6 +123,7 @@ def handle_login():
     
     return jsonify({
         "success": True,
+        "is_admin": False,
         "user_id": user['id'],
         "masked_email": masked_email,
         "expires_in": expiration_window
@@ -207,14 +219,6 @@ def set_system_mode():
     SYSTEM_RUNTIME_MODE = mode
     emit_telemetry(f"[MODE SWITCH] Structural layout environment reassigned -> {SYSTEM_RUNTIME_MODE.upper()}_MODE")
     return jsonify({"success": True})
-
-@app.route('/api/admin/login', methods=['POST'])
-def handle_admin_auth():
-    data = request.json or {}
-    password = data.get('password')
-    if password == "admin123":
-        return jsonify({"success": True})
-    return jsonify({"success": False, "message": "Elevated access parameter denied."}), 403
 
 @app.route('/api/admin/users', methods=['GET'])
 def get_admin_user_directory():
