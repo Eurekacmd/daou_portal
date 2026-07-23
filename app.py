@@ -9,23 +9,40 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime
 from flask import Flask, jsonify, request, Response, stream_with_context, render_template, make_response
+from flask_sqlalchemy import SQLAlchemy
+from werkzeug.security import generate_password_hash, check_password_hash
 
 app = Flask(__name__)
 
-# --- IN-MEMORY DATABASE MATRICES ---
-USERS_DB = [
-    {
-        "id": 1,
-        "username": "Enoch",
-        "password": "password",
-        "full_name": "Enoch Ola",
-        "matric_no": "DAOU/CYB/2026/001",
-        "email": "enochstudent@daou.edu.ng"
-    }
-]
+# --- DATABASE CONFIGURATION FOR RENDER POSTGRESQL ---
+database_url = os.environ.get('DATABASE_URL')
+if database_url and database_url.startswith("postgres://"):
+    database_url = database_url.replace("postgres://", "postgresql://", 1)
+
+app.config['SQLALCHEMY_DATABASE_URI'] = database_url or 'sqlite:///daou_portal.db'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+db = SQLAlchemy(app)
+
+# --- DATABASE MODELS ---
+class UserModel(db.Model):
+    __tablename__ = 'users'
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(80), unique=True, nullable=False)
+    password_hash = db.Column(db.String(256), nullable=False)
+    full_name = db.Column(db.String(120), nullable=False)
+    matric_no = db.Column(db.String(50), unique=True, nullable=False)
+    email = db.Column(db.String(120), unique=True, nullable=False)
+
+class RatingModel(db.Model):
+    __tablename__ = 'ratings'
+    id = db.Column(db.Integer, primary_key=True)
+    timestamp = db.Column(db.String(50), nullable=False)
+    username = db.Column(db.String(80), nullable=False)
+    matric_no = db.Column(db.String(50), nullable=False)
+    rating_score = db.Column(db.Integer, nullable=False)
 
 PENDING_OTP_VALIDATIONS = {}
-PORTAL_RATINGS = []
 SYSTEM_RUNTIME_MODE = "user"
 TELEMETRY_LISTENERS = []
 
@@ -123,21 +140,22 @@ def handle_registration():
     if not all([username, password, email, full_name]):
         return jsonify({"success": False, "message": "Missing required registration framework dimensions."}), 400
 
-    if any(u['username'].lower() == username.lower() for u in USERS_DB):
-        return jsonify({"success": False, "message": "Username already claimed within memory database matrix."}), 400
-    if any(u['email'].lower() == email.lower() for u in USERS_DB):
-        return jsonify({"success": False, "message": "Email mapping signature already linked."}), 400
+    existing_user = UserModel.query.filter((UserModel.username.ilike(username)) | (UserModel.email.ilike(email))).first()
+    if existing_user:
+        return jsonify({"success": False, "message": "Username or email mapping signature already claimed within database matrix."}), 400
 
     assigned_matric = generate_matric_number()
-    new_user = {
-        "id": len(USERS_DB) + 1,
-        "username": username,
-        "password": password,
-        "full_name": full_name,
-        "matric_no": assigned_matric,
-        "email": email
-    }
-    USERS_DB.append(new_user)
+    hashed_pwd = generate_password_hash(password)
+    
+    new_user = UserModel(
+        username=username,
+        password_hash=hashed_pwd,
+        full_name=full_name,
+        matric_no=assigned_matric,
+        email=email
+    )
+    db.session.add(new_user)
+    db.session.commit()
     
     emit_telemetry(f"<span class='term-success'>[REGISTRATION] {username} registered. Assigned Matric: {assigned_matric}</span>")
     return jsonify({"success": True, "generated_matric": assigned_matric})
@@ -159,34 +177,34 @@ def handle_login():
             "message": "Admin authorization granted."
         })
 
-    user = next((u for u in USERS_DB if u['username'].lower() == username.lower()), None)
+    user = UserModel.query.filter(UserModel.username.ilike(username)).first()
     
-    if not user or user['password'] != password:
+    if not user or not check_password_hash(user.password_hash, password):
         emit_telemetry(f"<span class='term-warn'>[AUTH FAILURE] Rejected credential assertion match for: {username}</span>")
         return jsonify({"success": False, "message": "Invalid portal credentials footprint."}), 401
 
     otp = str(random.randint(100000, 999999))
     expiration_window = 300 
     
-    PENDING_OTP_VALIDATIONS[user['id']] = {
+    PENDING_OTP_VALIDATIONS[user.id] = {
         "code": otp,
         "expires_at": time.time() + expiration_window
     }
 
     # Attempt to send real email via SMTP, fallback to telemetry log simulation if credentials aren't set
-    email_sent = send_smtp_otp_email(user['email'], otp)
+    email_sent = send_smtp_otp_email(user.email, otp)
     if email_sent:
-        emit_telemetry(f"<span class='term-success'>[EMAIL DISPATCHED] Security OTP code successfully sent via SMTP to {user['email']}</span>")
+        emit_telemetry(f"<span class='term-success'>[EMAIL DISPATCHED] Security OTP code successfully sent via SMTP to {user.email}</span>")
     else:
-        emit_telemetry(f"[MFA SIMULATED] Security OTP code ({otp}) generated for user ID: {user['id']}")
+        emit_telemetry(f"[MFA SIMULATED] Security OTP code ({otp}) generated for user ID: {user.id}")
 
-    email_parts = user['email'].split('@')
+    email_parts = user.email.split('@')
     masked_email = f"{email_parts[0][:3]}***@{email_parts[1]}"
     
     return jsonify({
         "success": True,
         "is_admin": False,
-        "user_id": user['id'],
+        "user_id": user.id,
         "masked_email": masked_email,
         "expires_in": expiration_window
     })
@@ -212,7 +230,7 @@ def handle_otp_verification():
         return jsonify({"success": False, "message": "Invalid security authentication code sequence match."}), 400
 
     del PENDING_OTP_VALIDATIONS[user_id]
-    user = next((u for u in USERS_DB if u['id'] == user_id), None)
+    user = UserModel.query.get(user_id)
     
     # --- MULTI-DEVICE SESSION CREATION ---
     session_token = secrets.token_hex(32)
@@ -222,7 +240,7 @@ def handle_otp_verification():
 
     session_entry = {
         "id": len(USER_SESSIONS_DB) + 1,
-        "user_id": user['id'],
+        "user_id": user.id,
         "session_token": session_token,
         "ip_address": ip_address,
         "device_name": device_name,
@@ -231,14 +249,14 @@ def handle_otp_verification():
     }
     USER_SESSIONS_DB.append(session_entry)
 
-    emit_telemetry(f"<span class='term-success'>[LOGIN COMPLETE] MFA clearance passed for target {user['username']} from {device_name} ({ip_address}).</span>")
+    emit_telemetry(f"<span class='term-success'>[LOGIN COMPLETE] MFA clearance passed for target {user.username} from {device_name} ({ip_address}).</span>")
     
     resp_data = {
         "success": True,
-        "user_id": user['id'],
+        "user_id": user.id,
         "user_info": {
-            "full_name": user['full_name'],
-            "matric_no": user['matric_no']
+            "full_name": user.full_name,
+            "matric_no": user.matric_no
         }
     }
     
@@ -256,7 +274,9 @@ def handle_google_oauth():
 
     emit_telemetry("<span class='term-success'>[GOOGLE LOGIN] Parsing inbound federated token payload signatures.</span>")
     
-    user = USERS_DB[0] 
+    user = UserModel.query.first()
+    if not user:
+        return jsonify({"success": False, "message": "No active user footprint found for federation hook."}), 400
     
     # --- MULTI-DEVICE SESSION CREATION FOR GOOGLE OAUTH ---
     session_token = secrets.token_hex(32)
@@ -266,7 +286,7 @@ def handle_google_oauth():
 
     session_entry = {
         "id": len(USER_SESSIONS_DB) + 1,
-        "user_id": user['id'],
+        "user_id": user.id,
         "session_token": session_token,
         "ip_address": ip_address,
         "device_name": device_name,
@@ -277,10 +297,10 @@ def handle_google_oauth():
 
     resp_data = {
         "success": True,
-        "user_id": user['id'],
+        "user_id": user.id,
         "user_info": {
-            "full_name": user['full_name'],
-            "matric_no": user['matric_no']
+            "full_name": user.full_name,
+            "matric_no": user.matric_no
         }
     }
     response = make_response(jsonify(resp_data))
@@ -355,19 +375,20 @@ def record_portal_rating():
     if not user_id or not rating:
         return jsonify({"success": False, "message": "Incomplete evaluation matrix metrics payload."}), 400
 
-    user = next((u for u in USERS_DB if u['id'] == user_id), None)
+    user = UserModel.query.get(user_id)
     if not user:
         return jsonify({"success": False, "message": "Session footprint identity reference untrusted."}), 403
 
-    rating_entry = {
-        "timestamp": time.strftime('%Y-%m-%d %H:%M:%S'),
-        "username": user['username'],
-        "matric_no": user['matric_no'],
-        "rating_score": int(rating)
-    }
-    PORTAL_RATINGS.append(rating_entry)
+    rating_entry = RatingModel(
+        timestamp=time.strftime('%Y-%m-%d %H:%M:%S'),
+        username=user.username,
+        matric_no=user.matric_no,
+        rating_score=int(rating)
+    )
+    db.session.add(rating_entry)
+    db.session.commit()
     
-    emit_telemetry(f"[METRIC LOGGED] User {user['username']} pushed score value array: {rating}/10")
+    emit_telemetry(f"[METRIC LOGGED] User {user.username} pushed score value array: {rating}/10")
     return jsonify({"success": True, "message": "Metric score captured successfully."})
 
 # --- BACKEND SYSTEM ADMINISTRATION PIPELINES ---
@@ -385,7 +406,17 @@ def set_system_mode():
 def get_admin_user_directory():
     if SYSTEM_RUNTIME_MODE != "admin":
         return jsonify({"success": False, "message": "Operation requires structural admin validation context status."}), 403
-    return jsonify({"success": True, "users": USERS_DB})
+    
+    users = UserModel.query.all()
+    users_list = [{
+        "id": u.id,
+        "username": u.username,
+        "full_name": u.full_name,
+        "matric_no": u.matric_no,
+        "email": u.email
+    } for u in users]
+    
+    return jsonify({"success": True, "users": users_list})
 
 @app.route('/api/admin/users/update/<int:user_id>', methods=['PUT'])
 def update_user_profile(user_id):
@@ -393,27 +424,32 @@ def update_user_profile(user_id):
         return jsonify({"success": False, "message": "Access restricted."}), 403
         
     data = request.json or {}
-    user = next((u for u in USERS_DB if u['id'] == user_id), None)
+    user = UserModel.query.get(user_id)
     
     if not user:
         return jsonify({"success": False, "message": "Target record reference identity not located."}), 404
 
-    user['full_name'] = data.get('full_name', user['full_name'])
-    user['matric_no'] = data.get('matric_no', user['matric_no'])
-    user['email'] = data.get('email', user['email'])
+    user.full_name = data.get('full_name', user.full_name)
+    user.matric_no = data.get('matric_no', user.matric_no)
+    user.email = data.get('email', user.email)
+    
+    db.session.commit()
     
     emit_telemetry(f"<span class='term-success'>[DB ROW UPDATE] Row modification written successfully on identifier ID: {user_id}</span>")
     return jsonify({"success": True})
 
 @app.route('/api/admin/users/delete/<int:user_id>', methods=['DELETE'])
 def delete_user_profile(user_id):
-    global USERS_DB
     if SYSTEM_RUNTIME_MODE != "admin":
         return jsonify({"success": False, "message": "Access restricted."}), 403
 
-    USERS_DB = [u for u in USERS_DB if u['id'] != user_id]
-    emit_telemetry(f"<span class='term-warn'>[DB ROW PURGE] Dropped entry row structural reference index match ID: {user_id}</span>")
-    return jsonify({"success": True})
+    user = UserModel.query.get(user_id)
+    if user:
+        db.session.delete(user)
+        db.session.commit()
+        emit_telemetry(f"<span class='term-warn'>[DB ROW PURGE] Dropped entry row structural reference index match ID: {user_id}</span>")
+        return jsonify({"success": True})
+    return jsonify({"success": False, "message": "User not found."}), 404
 
 @app.route('/api/ratings/export', methods=['GET'])
 def export_ratings_csv():
@@ -424,8 +460,9 @@ def export_ratings_csv():
     writer = csv.writer(dest_output)
     writer.writerow(['Timestamp Signature', 'Account Username', 'Matric Number', 'Metric Rating Score'])
     
-    for row in PORTAL_RATINGS:
-        writer.writerow([row['timestamp'], row['username'], row['matric_no'], row['rating_score']])
+    ratings = RatingModel.query.all()
+    for row in ratings:
+        writer.writerow([row.timestamp, row.username, row.matric_no, row.rating_score])
         
     response_payload = dest_output.getvalue()
     dest_output.close()
@@ -451,6 +488,20 @@ def backend_telemetry_stream():
             time.sleep(0.2)
 
     return Response(stream_with_context(event_stream_loop()), mimetype="text/event-stream")
+
+# --- INITIALIZE DATABASE & DEFAULT USER ---
+with app.app_context():
+    db.create_all()
+    if not UserModel.query.filter_by(username="Enoch").first():
+        default_user = UserModel(
+            username="Enoch",
+            password_hash=generate_password_hash("password"),
+            full_name="Enoch Ola",
+            matric_no="DAOU/CYB/2026/001",
+            email="enochstudent@daou.edu.ng"
+        )
+        db.session.add(default_user)
+        db.session.commit()
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=True)
