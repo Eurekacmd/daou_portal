@@ -399,12 +399,8 @@ def set_system_mode():
 @app.route('/api/admin/users', methods=['GET'])
 def get_admin_user_directory():
     global SYSTEM_RUNTIME_MODE
+    SYSTEM_RUNTIME_MODE = "admin"
     
-    # Auto-recover/maintain admin mode context if coming from an admin interaction panel
-    if SYSTEM_RUNTIME_MODE != "admin":
-        SYSTEM_RUNTIME_MODE = "admin"
-    
-    # Expire session to force a fresh reload from the actual database (prevents stale caching of newly injected rows)
     db.session.expire_all()
     users = UserModel.query.all()
     
@@ -421,8 +417,7 @@ def get_admin_user_directory():
 @app.route('/api/admin/inject-user', methods=['POST'])
 def admin_inject_user():
     global SYSTEM_RUNTIME_MODE
-    if SYSTEM_RUNTIME_MODE != "admin":
-        SYSTEM_RUNTIME_MODE = "admin"
+    SYSTEM_RUNTIME_MODE = "admin"
 
     data = request.json or {}
     username = data.get('username', '').strip()
@@ -431,11 +426,13 @@ def admin_inject_user():
     full_name = data.get('full_name', '').strip()
 
     if not all([username, password, email, full_name]):
+        emit_telemetry("<span class='term-warn'>[DB ERR] Missing fields for account injection.</span>")
         return jsonify({"success": False, "message": "Missing required fields for account injection."}), 400
 
     existing_user = UserModel.query.filter((UserModel.username.ilike(username)) | (UserModel.email.ilike(email))).first()
     if existing_user:
-        return jsonify({"success": False, "message": "Username or email already exists in database."}), 400
+        emit_telemetry(f"<span class='term-warn'>[DB ERR] Username or email '{username}' / '{email}' already claimed.</span>")
+        return jsonify({"success": False, "message": "Username or email already claimed within database matrix."}), 400
 
     assigned_matric = generate_matric_number()
     hashed_pwd = generate_password_hash(password)
@@ -456,8 +453,7 @@ def admin_inject_user():
 @app.route('/api/admin/users/update/<int:user_id>', methods=['PUT'])
 def update_user_profile(user_id):
     global SYSTEM_RUNTIME_MODE
-    if SYSTEM_RUNTIME_MODE != "admin":
-        SYSTEM_RUNTIME_MODE = "admin"
+    SYSTEM_RUNTIME_MODE = "admin"
 
     data = request.json or {}
     user = UserModel.query.get(user_id)
@@ -477,8 +473,7 @@ def update_user_profile(user_id):
 @app.route('/api/admin/users/delete/<int:user_id>', methods=['DELETE'])
 def delete_user_profile(user_id):
     global SYSTEM_RUNTIME_MODE
-    if SYSTEM_RUNTIME_MODE != "admin":
-        SYSTEM_RUNTIME_MODE = "admin"
+    SYSTEM_RUNTIME_MODE = "admin"
 
     user = UserModel.query.get(user_id)
     if user:
