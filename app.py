@@ -3,7 +3,7 @@ import random
 import time
 import csv
 import io
-from flask import Flask, jsonify, request, Response, stream_with_context
+from flask import Flask, jsonify, request, Response, stream_with_context, render_template
 
 app = Flask(__name__)
 
@@ -52,6 +52,13 @@ class TelemetryQueue:
         if self.messages:
             return self.messages.pop(0)
         return None
+
+# --- FRONTEND TEMPLATE ROUTE ---
+
+@app.route('/')
+def serve_portal_gateway():
+    """Renders the main frontend interface template."""
+    return render_template('index.html')
 
 # --- AUTHENTICATION INTERFACE PIPELINES ---
 
