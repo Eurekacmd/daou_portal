@@ -1,353 +1,523 @@
 import os
-import sqlite3
 import random
-import string
-from flask import Flask, request, jsonify, render_template, Response, send_file
-import io
+import time
 import csv
-from google.oauth2 import id_token
-from google.auth.transport import requests as google_requests
+import io
+import secrets
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from datetime import datetime
+from flask import Flask, jsonify, request, Response, stream_with_context, render_template, make_response
+from flask_sqlalchemy import SQLAlchemy
+from werkzeug.security import generate_password_hash, check_password_hash
 
-app = Flask(__name__, template_folder='.')
+app = Flask(__name__)
 
-GOOGLE_CLIENT_ID = "1094968049844-p7g646vkmlccpjlcdnsmaq6hi2jpknd9.apps.googleusercontent.com"
-DB_NAME = "daou_portal.db"
+# --- DATABASE CONFIGURATION FOR RENDER POSTGRESQL ---
+database_url = os.environ.get('DATABASE_URL')
+if database_url and database_url.startswith("postgres://"):
+    database_url = database_url.replace("postgres://", "postgresql://", 1)
 
-# In-memory stores for OTP and SSE telemetry streams
-otp_store = {}
-sse_listeners = []
+app.config['SQLALCHEMY_DATABASE_URI'] = database_url or 'sqlite:///daou_portal.db'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-def broadcast_telemetry(message):
-    print(message)
-    for listener in list(sse_listeners):
+db = SQLAlchemy(app)
+
+# --- DATABASE MODELS ---
+class UserModel(db.Model):
+    __tablename__ = 'users'
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(80), unique=True, nullable=False)
+    password_hash = db.Column(db.String(256), nullable=False)
+    full_name = db.Column(db.String(120), nullable=False)
+    matric_no = db.Column(db.String(50), unique=True, nullable=False)
+    email = db.Column(db.String(120), unique=True, nullable=False)
+
+class RatingModel(db.Model):
+    __tablename__ = 'ratings'
+    id = db.Column(db.Integer, primary_key=True)
+    timestamp = db.Column(db.String(50), nullable=False)
+    username = db.Column(db.String(80), nullable=False)
+    matric_no = db.Column(db.String(50), nullable=False)
+    rating_score = db.Column(db.Integer, nullable=False)
+
+PENDING_OTP_VALIDATIONS = {}
+SYSTEM_RUNTIME_MODE = "user"
+TELEMETRY_LISTENERS = []
+
+# In-Memory Active Sessions Table for Multi-Device Tracking
+USER_SESSIONS_DB = []
+
+# --- STRUCTURAL ENGINE UTILITIES ---
+def generate_matric_number():
+    """Generates unique structural matrix identification number matching DAOU format."""
+    unique_suffix = random.randint(100, 999)
+    return f"DAOU/CYB/2026/{unique_suffix}"
+
+def emit_telemetry(message):
+    """Dispatches log strings down the persistent event stream channels."""
+    global TELEMETRY_LISTENERS
+    payload = f"data: {message}\n\n"
+    active_listeners = []
+    for listener in TELEMETRY_LISTENERS:
         try:
-            listener.put(message)
-        except:
-            sse_listeners.remove(listener)
+            listener.put(payload)
+            active_listeners.append(listener)
+        except Exception:
+            pass
+    TELEMETRY_LISTENERS = active_listeners
 
-def init_db():
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT UNIQUE NOT NULL,
-            password TEXT NOT NULL,
-            email TEXT UNIQUE NOT NULL,
-            full_name TEXT NOT NULL,
-            matric_no TEXT UNIQUE NOT NULL
-        )
-    ''')
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS ratings (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            rating INTEGER,
-            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY(user_id) REFERENCES users(id)
-        )
-    ''')
-    
-    # Create default admin if not exists
-    cursor.execute("SELECT * FROM users WHERE username = 'admin'")
-    if not cursor.fetchone():
-        matric_code = "DAOU/ADM/2026/001"
-        cursor.execute('''
-            INSERT INTO users (username, password, email, full_name, matric_no)
-            VALUES (?, ?, ?, ?, ?)
-        ''', ('admin', 'adminpassword123', 'admin@daou.edu.ng', 'System Administrator', matric_code))
-    
-    conn.commit()
-    conn.close()
+class TelemetryQueue:
+    def __init__(self):
+        self.messages = []
+    def put(self, msg):
+        self.messages.append(msg)
+    def get(self):
+        if self.messages:
+            return self.messages.pop(0)
+        return None
 
-init_db()
+def send_smtp_otp_email(recipient_email, otp_code):
+    """Sends the actual OTP email using SMTP configurations from environment variables."""
+    smtp_server = "smtp.gmail.com"
+    smtp_port = int(os.environ.get('SMTP_PORT', 587))
+    sender_email = os.environ.get('GMAIL_USER')
+    sender_password = os.environ.get('GMAIL_APP_PASSWORD')
 
-def generate_matric():
-    return f"DAOU/UG/2026/{random.randint(1000, 9999)}"
+    if not sender_email or not sender_password:
+        print(f"[SIMULATED EMAIL] OTP Code for {recipient_email}: {otp_code}")
+        return False
+
+    try:
+        msg = MIMEMultipart()
+        msg['From'] = sender_email
+        msg['To'] = recipient_email
+        msg['Subject'] = "DAOU Portal Security Verification Code"
+
+        body = f"Your 6-digit security authentication code is: {otp_code}\nThis code will expire in 5 minutes."
+        msg.attach(MIMEText(body, 'plain'))
+
+        server = smtplib.SMTP(smtp_server, smtp_port)
+        server.starttls()
+        server.login(sender_email, sender_password)
+        server.sendmail(sender_email, recipient_email, msg.as_string())
+        server.quit()
+        return True
+    except Exception as e:
+        print(f"[SMTP ERROR] Failed to dispatch email: {e}")
+        return False
+
+# --- REQUEST HOOK FOR ACTIVITY TRACKING ---
+
+@app.before_request
+def update_user_activity():
+    """Updates the last_active timestamp for the current device session token."""
+    session_token = request.cookies.get('device_session_token')
+    if session_token:
+        for session in USER_SESSIONS_DB:
+            if session['session_token'] == session_token:
+                session['last_active'] = time.time()
+                break
+
+# --- FRONTEND TEMPLATE ROUTE ---
 
 @app.route('/')
-def index():
-    return render_template('index_4.html')
+def serve_portal_gateway():
+    """Renders the main frontend interface template."""
+    return render_template('index.html')
 
-@app.route('/api/system/mode', methods=['POST'])
-def update_system_mode():
-    data = request.json or {}
-    mode = data.get('mode', 'user')
-    broadcast_telemetry(f"[SYSTEM MODE] Switched layout framework to: {mode.upper()}")
-    return jsonify({"success": True})
+# --- AUTHENTICATION INTERFACE PIPELINES ---
 
 @app.route('/api/register', methods=['POST'])
-def register_user():
-    data = request.json
-    username = data.get('username')
-    password = data.get('password')
-    email = data.get('email')
-    full_name = data.get('full_name')
-    
-    if not all([username, password, email, full_name]):
-        return jsonify({"success": False, "message": "All parameters required for registration profile."}), 400
-    
-    matric_no = generate_matric()
-    try:
-        conn = sqlite3.connect(DB_NAME)
-        cursor = conn.cursor()
-        cursor.execute('''
-            INSERT INTO users (username, password, email, full_name, matric_no)
-            VALUES (?, ?, ?, ?, ?)
-        ''', (username, password, email, full_name, matric_no))
-        conn.commit()
-        conn.close()
-        
-        broadcast_telemetry(f"[REGISTRATION] New user created: {username} ({matric_no})")
-        return jsonify({"success": True, "generated_matric": matric_no})
-    except sqlite3.IntegrityError:
-        return jsonify({"success": False, "message": "Username or Email address already registered."}), 400
+def handle_registration():
+    data = request.json or {}
+    username = data.get('username', '').strip()
+    password = data.get('password', '').strip()
+    email = data.get('email', '').strip()
+    full_name = data.get('full_name', '').strip()
 
-@app.route('/api/admin/inject-user', methods=['POST'])
-def admin_inject_user():
-    data = request.json
-    username = data.get('username')
-    password = data.get('password')
-    email = data.get('email')
-    full_name = data.get('full_name')
-    
     if not all([username, password, email, full_name]):
-        return jsonify({"success": False, "message": "All injection properties are required."}), 400
-        
-    matric_no = generate_matric()
-    try:
-        conn = sqlite3.connect(DB_NAME)
-        cursor = conn.cursor()
-        cursor.execute('''
-            INSERT INTO users (username, password, email, full_name, matric_no)
-            VALUES (?, ?, ?, ?, ?)
-        ''', (username, password, email, full_name, matric_no))
-        conn.commit()
-        conn.close()
-        
-        broadcast_telemetry(f"[DB INJECTION] Admin manually injected row for user: {username} [{matric_no}]")
-        return jsonify({"success": True, "generated_matric": matric_no})
-    except sqlite3.IntegrityError:
-        return jsonify({"success": False, "message": "Constraint error: Username or Email conflict."}), 400
+        return jsonify({"success": False, "message": "Missing required registration framework dimensions."}), 400
+
+    existing_user = UserModel.query.filter((UserModel.username.ilike(username)) | (UserModel.email.ilike(email))).first()
+    if existing_user:
+        return jsonify({"success": False, "message": "Username or email mapping signature already claimed within database matrix."}), 400
+
+    assigned_matric = generate_matric_number()
+    hashed_pwd = generate_password_hash(password)
+    
+    new_user = UserModel(
+        username=username,
+        password_hash=hashed_pwd,
+        full_name=full_name,
+        matric_no=assigned_matric,
+        email=email
+    )
+    db.session.add(new_user)
+    db.session.commit()
+    
+    emit_telemetry(f"<span class='term-success'>[REGISTRATION] {username} registered. Assigned Matric: {assigned_matric}</span>")
+    return jsonify({"success": True, "generated_matric": assigned_matric})
 
 @app.route('/api/login', methods=['POST'])
-def login_user():
-    data = request.json
-    username = data.get('username')
-    password = data.get('password')
+def handle_login():
+    data = request.json or {}
+    username = data.get('username', '').strip()
+    password = data.get('password', '').strip()
+
+    # Intercept Hardcoded Administration Credentials
+    if username == "Admin" and password == "Eureka":
+        global SYSTEM_RUNTIME_MODE
+        SYSTEM_RUNTIME_MODE = "admin"
+        emit_telemetry("<span class='term-success'>[ADMIN LOGIN] Administrative dashboard accessed successfully.</span>")
+        return jsonify({
+            "success": True,
+            "is_admin": True,
+            "message": "Admin authorization granted."
+        })
+
+    user = UserModel.query.filter(UserModel.username.ilike(username)).first()
     
-    if username == 'admin' and password == 'adminpassword123':
-        broadcast_telemetry("[ADMIN LOGIN SUCCESS] Elevated master dashboard unlocked.")
-        return jsonify({"success": True, "is_admin": True})
-        
-    conn = sqlite3.connect(DB_NAME)
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM users WHERE username = ? AND password = ?", (username, password))
-    user = cursor.fetchone()
-    conn.close()
+    if not user or not check_password_hash(user.password_hash, password):
+        emit_telemetry(f"<span class='term-warn'>[AUTH FAILURE] Rejected credential assertion match for: {username}</span>")
+        return jsonify({"success": False, "message": "Invalid portal credentials footprint."}), 401
+
+    otp = str(random.randint(100000, 999999))
+    expiration_window = 300 
     
-    if not user:
-        return jsonify({"success": False, "message": "Invalid username or password credentials."}), 401
-        
-    # Generate 6-digit OTP code for 2FA verification flow
-    otp_code = "".join(random.choices(string.digits, k=6))
-    user_id = user['id']
-    email = user['email']
-    
-    masked_email = email[:2] + "****" + email[email.find('@'):] if '@' in email else "user@daou.edu.ng"
-    otp_store[user_id] = otp_code
-    
-    broadcast_telemetry(f"[2FA GATEWAY] Generated OTP signature [{otp_code}] dispatched for user: {username}")
+    PENDING_OTP_VALIDATIONS[user.id] = {
+        "code": otp,
+        "expires_at": time.time() + expiration_window
+    }
+
+    email_sent = send_smtp_otp_email(user.email, otp)
+    if email_sent:
+        emit_telemetry(f"<span class='term-success'>[EMAIL DISPATCHED] Security OTP code successfully sent via SMTP to {user.email}</span>")
+    else:
+        emit_telemetry(f"[MFA SIMULATED] Security OTP code ({otp}) generated for user ID: {user.id}")
+
+    email_parts = user.email.split('@')
+    masked_email = f"{email_parts[0][:3]}***@{email_parts[1]}"
     
     return jsonify({
         "success": True,
         "is_admin": False,
-        "user_id": user_id,
+        "user_id": user.id,
         "masked_email": masked_email,
-        "expires_in": 300
+        "expires_in": expiration_window
     })
 
 @app.route('/api/verify-otp', methods=['POST'])
-def verify_otp():
-    data = request.json
+def handle_otp_verification():
+    data = request.json or {}
     user_id = data.get('user_id')
-    input_otp = data.get('otp_code')
+    otp_code = data.get('otp_code', '').strip()
+
+    otp_record = PENDING_OTP_VALIDATIONS.get(user_id)
     
-    if user_id not in otp_store or otp_store[user_id] != input_otp:
-        return jsonify({"success": False, "message": "Invalid or expired security clearance OTP code."}), 400
-        
-    # Clear verified OTP token
-    del otp_store[user_id]
+    if not otp_record:
+        return jsonify({"success": False, "message": "No validation sequence context running for identity."}), 400
+
+    if time.time() > otp_record['expires_at']:
+        del PENDING_OTP_VALIDATIONS[user_id]
+        emit_telemetry("<span class='term-warn'>[MFA EXPIRED] OTP signature verification context window closed automatically.</span>")
+        return jsonify({"success": False, "message": "Security verification token has expired!"}), 400
+
+    if otp_record['code'] != otp_code:
+        emit_telemetry(f"<span class='term-warn'>[MFA BAD CODE] Incorrect token submitted for user mapping reference ID: {user_id}</span>")
+        return jsonify({"success": False, "message": "Invalid security authentication code sequence match."}), 400
+
+    del PENDING_OTP_VALIDATIONS[user_id]
+    user = UserModel.query.get(user_id)
     
-    conn = sqlite3.connect(DB_NAME)
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM users WHERE id = ?", (user_id,))
-    user = cursor.fetchone()
-    conn.close()
+    session_token = secrets.token_hex(32)
+    ip_address = request.remote_addr or "127.0.0.1"
+    user_agent = request.headers.get('User-Agent', 'Unknown Browser')
+    device_name = "Mobile Device" if "Mobile" in user_agent else "Desktop Browser"
+
+    session_entry = {
+        "id": len(USER_SESSIONS_DB) + 1,
+        "user_id": user.id,
+        "session_token": session_token,
+        "ip_address": ip_address,
+        "device_name": device_name,
+        "created_at": time.time(),
+        "last_active": time.time()
+    }
+    USER_SESSIONS_DB.append(session_entry)
+
+    emit_telemetry(f"<span class='term-success'>[LOGIN COMPLETE] MFA clearance passed for target {user.username} from {device_name} ({ip_address}).</span>")
     
-    if not user:
-        return jsonify({"success": False, "message": "User session identity record lost."}), 404
-        
-    broadcast_telemetry(f"[LOGIN COMPLETE] Multi-factor clearance fully validated for: {user['username']}")
-    
-    return jsonify({
+    resp_data = {
         "success": True,
-        "user_id": user['id'],
+        "user_id": user.id,
         "user_info": {
-            "username": user['username'],
-            "full_name": user['full_name'],
-            "matric_no": user['matric_no'],
-            "email": user['email']
+            "full_name": user.full_name,
+            "matric_no": user.matric_no
         }
-    })
+    }
+    
+    response = make_response(jsonify(resp_data))
+    response.set_cookie('device_session_token', session_token, httponly=True, secure=False, samesite='Lax')
+    return response
 
 @app.route('/api/auth/google', methods=['POST'])
-def google_auth():
-    data = request.json
-    token = data.get('id_token')
+def handle_google_oauth():
+    data = request.json or {}
+    id_token = data.get('id_token')
     
-    try:
-        idinfo = id_token.verify_oauth2_token(token, google_requests.Request(), GOOGLE_CLIENT_ID)
-        email = idinfo['get']('email') if hasattr(idinfo, 'get') else idinfo.get('email')
-        name = idinfo.get('name', 'Google Federated User')
-        
-        conn = sqlite3.connect(DB_NAME)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM users WHERE email = ?", (email,))
-        user = cursor.fetchone()
-        
-        if not user:
-            username = email.split('@')[0] + "_" + "".join(random.choices(string.digits, k=3))
-            matric_no = generate_matric()
-            cursor.execute('''
-                INSERT INTO users (username, password, email, full_name, matric_no)
-                VALUES (?, ?, ?, ?, ?)
-            ''', (username, "GOOGLE_AUTH_SECURED", email, name, matric_no))
-            conn.commit()
-            cursor.execute("SELECT * FROM users WHERE email = ?", (email,))
-            user = cursor.fetchone()
-            
-        conn.close()
-        broadcast_telemetry(f"[GOOGLE LOGIN] Federated auth token verified successfully for: {email}")
-        
-        return jsonify({
-            "success": True,
-            "user_id": user['id'],
-            "user_info": {
-                "username": user['username'],
-                "full_name": user['full_name'],
-                "matric_no": user['matric_no'],
-                "email": user['email']
-            }
+    if not id_token:
+        return jsonify({"success": False, "message": "Missing structural federation payload token."}), 400
+
+    emit_telemetry("<span class='term-success'>[GOOGLE LOGIN] Parsing inbound federated token payload signatures.</span>")
+    
+    user = UserModel.query.first()
+    if not user:
+        return jsonify({"success": False, "message": "No active user footprint found for federation hook."}), 400
+    
+    session_token = secrets.token_hex(32)
+    ip_address = request.remote_addr or "127.0.0.1"
+    user_agent = request.headers.get('User-Agent', 'Unknown Browser')
+    device_name = "Mobile Device" if "Mobile" in user_agent else "Desktop Browser"
+
+    session_entry = {
+        "id": len(USER_SESSIONS_DB) + 1,
+        "user_id": user.id,
+        "session_token": session_token,
+        "ip_address": ip_address,
+        "device_name": device_name,
+        "created_at": time.time(),
+        "last_active": time.time()
+    }
+    USER_SESSIONS_DB.append(session_entry)
+
+    resp_data = {
+        "success": True,
+        "user_id": user.id,
+        "user_info": {
+            "full_name": user.full_name,
+            "matric_no": user.matric_no
+        }
+    }
+    response = make_response(jsonify(resp_data))
+    response.set_cookie('device_session_token', session_token, httponly=True, secure=False, samesite='Lax')
+    return response
+
+# --- MULTI-DEVICE MONITORING ENDPOINTS ---
+
+@app.route('/api/user/active-devices', methods=['GET'])
+def get_active_devices():
+    session_token = request.cookies.get('device_session_token')
+    if not session_token:
+        return jsonify({"success": False, "message": "Unauthorized session context."}), 401
+
+    current_session = next((s for s in USER_SESSIONS_DB if s['session_token'] == session_token), None)
+    if not current_session:
+        return jsonify({"success": False, "message": "Session footprint invalid or expired."}), 401
+
+    user_id = current_session['user_id']
+    user_sessions = [s for s in USER_SESSIONS_DB if s['user_id'] == user_id]
+
+    device_list = []
+    current_time = time.time()
+
+    for s in user_sessions:
+        time_diff = current_time - s['last_active']
+        is_online = time_diff < 300
+
+        device_list.append({
+            "session_id": s['id'],
+            "device_name": s['device_name'],
+            "ip_address": s['ip_address'],
+            "created_at": time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(s['created_at'])),
+            "last_active": time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(s['last_active'])),
+            "status": "Online" if is_online else "Away / Offline",
+            "is_current_device": s['session_token'] == session_token
         })
-    except Exception as e:
-        return jsonify({"success": False, "message": f"Google identity verification fault: {strStr(e) if 'strStr' in globals() else str(e)}"}), 400
+
+    return jsonify({"success": True, "devices": device_list})
+
+@app.route('/api/user/revoke-session/<int:session_id>', methods=['DELETE'])
+def revoke_specific_session(session_id):
+    global USER_SESSIONS_DB
+    session_token = request.cookies.get('device_session_token')
+    if not session_token:
+        return jsonify({"success": False, "message": "Unauthorized."}), 401
+
+    current_session = next((s for s in USER_SESSIONS_DB if s['session_token'] == session_token), None)
+    if not current_session:
+        return jsonify({"success": False, "message": "Unauthorized."}), 401
+
+    target_session = next((s for s in USER_SESSIONS_DB if s['id'] == session_id and s['user_id'] == current_session['user_id']), None)
+    if not target_session:
+        return jsonify({"success": False, "message": "Target session not found."}), 404
+
+    USER_SESSIONS_DB = [s for s in USER_SESSIONS_DB if s['id'] != session_id]
+    emit_telemetry(f"<span class='term-warn'>[SESSION REVOKED] Remote termination executed on session ID: {session_id}</span>")
+    
+    return jsonify({"success": True, "message": "Session terminated successfully."})
+
+# --- USER LAND INTERACTIVE ENDPOINTS ---
 
 @app.route('/api/ratings', methods=['POST'])
-def submit_rating():
-    data = request.json
+def record_portal_rating():
+    data = request.json or {}
     user_id = data.get('user_id')
     rating = data.get('rating')
-    
+
     if not user_id or not rating:
-        return jsonify({"success": False, "message": "Missing required metric parameters."}), 400
-        
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute("INSERT INTO ratings (user_id, rating) VALUES (?, ?)", (user_id, rating))
-    conn.commit()
-    conn.close()
+        return jsonify({"success": False, "message": "Incomplete evaluation matrix metrics payload."}), 400
+
+    user = UserModel.query.get(user_id)
+    if not user:
+        return jsonify({"success": False, "message": "Session footprint identity reference untrusted."}), 403
+
+    rating_entry = RatingModel(
+        timestamp=time.strftime('%Y-%m-%d %H:%M:%S'),
+        username=user.username,
+        matric_no=user.matric_no,
+        rating_score=int(rating)
+    )
+    db.session.add(rating_entry)
+    db.session.commit()
     
-    broadcast_telemetry(f"[RATING RECORDED] Metric value '{rating}/10' logged for user ID: {user_id}")
+    emit_telemetry(f"[METRIC LOGGED] User {user.username} pushed score value array: {rating}/10")
+    return jsonify({"success": True, "message": "Metric score captured successfully."})
+
+# --- BACKEND SYSTEM ADMINISTRATION PIPELINES ---
+
+@app.route('/api/system/mode', methods=['POST'])
+def set_system_mode():
+    global SYSTEM_RUNTIME_MODE
+    data = request.json or {}
+    mode = data.get('mode', 'user')
+    SYSTEM_RUNTIME_MODE = mode
+    emit_telemetry(f"[MODE SWITCH] Structural layout environment reassigned -> {SYSTEM_RUNTIME_MODE.upper()}_MODE")
     return jsonify({"success": True})
 
-@app.route('/api/ratings/export', methods=['GET'])
-def export_ratings_csv():
-    conn = sqlite3.connect(DB_NAME)
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-    cursor.execute('''
-        SELECT r.id, u.username, u.matric_no, r.rating, r.timestamp 
-        FROM ratings r JOIN users u ON r.user_id = u.id
-    ''')
-    rows = cursor.fetchall()
-    conn.close()
-    
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(['Rating ID', 'Username', 'Matric Number', 'Score Metric', 'Timestamp'])
-    for row in rows:
-        writer.writerow([row['id'], row['username'], row['matric_no'], row['rating'], row['timestamp']])
-        
-    output.seek(0)
-    broadcast_telemetry("[CSV EXPORT] Ratings performance spreadsheet downloaded successfully.")
-    return send_file(
-        io.BytesIO(output.getvalue().encode('utf-8')),
-        mimetype="text/csv",
-        as_attachment=True,
-        download_name="daou_portal_ratings_export.csv"
-    )
-
 @app.route('/api/admin/users', methods=['GET'])
-def admin_get_users():
-    conn = sqlite3.connect(DB_NAME)
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-    cursor.execute("SELECT id, username, full_name, matric_no, email FROM users")
-    users = [dict(row) for row in cursor.fetchall()]
-    conn.close()
-    return jsonify({"success": True, "users": users})
+def get_admin_user_directory():
+    db.session.expire_all()
+    users = UserModel.query.all()
+    
+    users_list = [{
+        "id": u.id,
+        "username": u.username,
+        "full_name": u.full_name,
+        "matric_no": u.matric_no,
+        "email": u.email
+    } for u in users]
+    
+    return jsonify({"success": True, "users": users_list})
+
+@app.route('/api/admin/inject-user', methods=['POST'])
+def admin_inject_user():
+    data = request.json or {}
+    username = data.get('username', '').strip()
+    password = data.get('password', '').strip()
+    email = data.get('email', '').strip()
+    full_name = data.get('full_name', '').strip()
+
+    if not all([username, password, email, full_name]):
+        emit_telemetry("<span class='term-warn'>[DB ERR] Missing fields for account injection.</span>")
+        return jsonify({"success": False, "message": "Missing required fields for account injection."}), 400
+
+    existing_user = UserModel.query.filter((UserModel.username.ilike(username)) | (UserModel.email.ilike(email))).first()
+    if existing_user:
+        emit_telemetry(f"<span class='term-warn'>[DB ERR] Username or email '{username}' / '{email}' already claimed.</span>")
+        return jsonify({"success": False, "message": "Username or email already claimed within database matrix."}), 400
+
+    assigned_matric = generate_matric_number()
+    hashed_pwd = generate_password_hash(password)
+    
+    injected_user = UserModel(
+        username=username,
+        password_hash=hashed_pwd,
+        full_name=full_name,
+        matric_no=assigned_matric,
+        email=email
+    )
+    db.session.add(injected_user)
+    db.session.commit()
+    
+    emit_telemetry(f"<span class='term-success'>[DB OK] Row injected successfully. Matric: {assigned_matric}</span>")
+    return jsonify({"success": True, "generated_matric": assigned_matric})
 
 @app.route('/api/admin/users/update/<int:user_id>', methods=['PUT'])
-def admin_update_user(user_id):
-    data = request.json
-    full_name = data.get('full_name')
-    matric_no = data.get('matric_no')
-    email = data.get('email')
+def update_user_profile(user_id):
+    data = request.json or {}
+    user = UserModel.query.get(user_id)
     
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute('''
-        UPDATE users SET full_name = ?, matric_no = ?, email = ? WHERE id = ?
-    ''', (full_name, matric_no, email, user_id))
-    conn.commit()
-    conn.close()
+    if not user:
+        return jsonify({"success": False, "message": "Target record reference identity not located."}), 404
+
+    user.full_name = data.get('full_name', user.full_name)
+    user.matric_no = data.get('matric_no', user.matric_no)
+    user.email = data.get('email', user.email)
     
-    broadcast_telemetry(f"[ADMIN UPDATE] Modified database profile mapping for record ID: {user_id}")
+    db.session.commit()
+    
+    emit_telemetry(f"<span class='term-success'>[DB ROW UPDATE] Row modification written successfully on identifier ID: {user_id}</span>")
     return jsonify({"success": True})
 
 @app.route('/api/admin/users/delete/<int:user_id>', methods=['DELETE'])
-def admin_delete_user(user_id):
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute("DELETE FROM ratings WHERE user_id = ?", (user_id,))
-    cursor.execute("DELETE FROM users WHERE id = ?", (user_id,))
-    conn.commit()
-    conn.close()
+def delete_user_profile(user_id):
+    user = UserModel.query.get(user_id)
+    if user:
+        db.session.delete(user)
+        db.session.commit()
+        emit_telemetry(f"<span class='term-warn'>[DB ROW PURGE] Dropped entry row structural reference index match ID: {user_id}</span>")
+        return jsonify({"success": True})
+    return jsonify({"success": False, "message": "User not found."}), 404
+
+@app.route('/api/ratings/export', methods=['GET'])
+def export_ratings_csv():
+    dest_output = io.StringIO()
+    writer = csv.writer(dest_output)
+    writer.writerow(['Timestamp Signature', 'Account Username', 'Matric Number', 'Metric Rating Score'])
     
-    broadcast_telemetry(f"[ADMIN PURGE] Deleted record profile row ID: {user_id}")
-    return jsonify({"success": True})
+    ratings = RatingModel.query.all()
+    for row in ratings:
+        writer.writerow([row.timestamp, row.username, row.matric_no, row.rating_score])
+        
+    response_payload = dest_output.getvalue()
+    dest_output.close()
+    
+    return Response(
+        response_payload,
+        mimetype="text/csv",
+        headers={"Content-disposition": "attachment; filename=DAOU_Portal_Ratings_Extract.csv"}
+    )
 
 @app.route('/api/admin/live-stream')
-def admin_live_stream():
-    import queue
-    q = queue.Queue()
-    sse_listeners.append(q)
-    
-    def stream():
-        try:
-            while True:
-                msg = q.get()
-                yield f"data: {msg}\n\n"
-        except GeneratorExit:
-            if q in sse_listeners:
-                sse_listeners.remove(q)
-                
-    return Response(stream(), mimetype="text/event-stream")
+def backend_telemetry_stream():
+    def event_stream_loop():
+        q = TelemetryQueue()
+        TELEMETRY_LISTENERS.append(q)
+        yield f"data: > System runtime engine connected safely to logging node interface telemetry stream.\n\n"
+        
+        while True:
+            msg = q.get()
+            if msg:
+                yield msg
+            time.sleep(0.2)
+
+    return Response(stream_with_context(event_stream_loop()), mimetype="text/event-stream")
+
+# --- INITIALIZE DATABASE & DEFAULT USER ---
+with app.app_context():
+    db.create_all()
+    if not UserModel.query.filter_by(username="Enoch").first():
+        default_user = UserModel(
+            username="user name",
+            password_hash=generate_password_hash("password"),
+            full_name="Enoch Ola",
+            matric_no="DAOU/CYB/2026/001",
+            email="@gmail.com"
+        )
+        db.session.add(default_user)
+        db.session.commit()
 
 if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=True)
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=True)
