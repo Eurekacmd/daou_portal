@@ -5,9 +5,10 @@ import time
 import smtplib
 import csv
 import io
+import queue
 import threading  # Replaced Celery with high-speed async native execution threads
 from email.mime.text import MIMEText
-from flask import Flask, request, jsonify, render_template, Response
+from flask import Flask, request, jsonify, render_template, Response, stream_with_context
 
 # Cryptographic Federated Verification Imports
 from google.oauth2 import id_token
@@ -31,6 +32,9 @@ IS_POSTGRES = DATABASE_URL.startswith("postgres://") or DATABASE_URL.startswith(
 CURRENT_SYSTEM_MODE = "user"
 ACTIVE_OTP_STORE = {}
 
+# Live Admin Pub/Sub Broadcast Subscriptions Layout Container
+LIVE_ADMIN_QUEUES = []
+
 # Elevated Console Authentication Parameters
 ADMIN_USERNAME = "admin"
 ADMIN_PASSWORD = "DAOU_admin_2026"
@@ -44,6 +48,15 @@ SMTP_FROM_NAME = os.environ.get('SMTP_FROM_NAME', 'DAOU University Portal')
 
 # Google OAuth Federation Credentials Mapping Identity Key
 GOOGLE_CLIENT_ID = os.environ.get('GOOGLE_CLIENT_ID', 'YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com')
+
+
+def broadcast_system_event(msg_text):
+    """Pushes runtime authentication event alerts instantly to all open Admin SSE data pipelines."""
+    for client_queue in LIVE_ADMIN_QUEUES:
+        try:
+            client_queue.put(msg_text)
+        except Exception:
+            pass
 
 
 def get_db_connection():
@@ -199,8 +212,25 @@ def api_admin_login():
     data = request.json or {}
     if data.get('username') == ADMIN_USERNAME and data.get('password') == ADMIN_PASSWORD:
         write_auth_log("ADMIN", "Console Gateway Authentication Check", "SUCCESS")
+        broadcast_system_event("<span class='term-success'>[ADMIN LOGIN] Elevated console authorization handshake verified.</span>")
         return jsonify({"success": True, "role": "admin"})
     return jsonify({"success": False, "message": "Access Denied: Administrative footprint failure."}), 401
+
+
+@app.route('/api/admin/live-stream', methods=['GET'])
+def api_admin_live_stream():
+    """Server-Sent Events structural telemetry pipeline feeding real-time console updates."""
+    def stream_broker():
+        q = queue.Queue()
+        LIVE_ADMIN_QUEUES.append(q)
+        try:
+            while True:
+                msg = q.get()
+                yield f"data: {msg}\n\n"
+        except GeneratorExit:
+            LIVE_ADMIN_QUEUES.remove(q)
+            
+    return Response(stream_with_context(stream_broker()), mimetype="text/event-stream")
 
 
 @app.route('/api/register', methods=['POST'])
@@ -248,6 +278,7 @@ def api_register():
     )
 
     write_auth_log(username, f"Public Registration | Auto Matric: {generated_matric}", "SUCCESS")
+    broadcast_system_event(f"<span class='term-success'>[REGISTRATION] New profile entry initialized for user: <strong>{username}</strong> ({generated_matric}).</span>")
     return jsonify({"success": True, "generated_matric": generated_matric})
 
 
@@ -274,7 +305,10 @@ def api_login():
         ).start()
         
         write_auth_log(username, "Primary Credential Verification -> Offloaded to Thread Loop", "SUCCESS")
+        broadcast_system_event(f"<span>[LOGIN ATTEMPT] User <strong>{username}</strong> verified primary credentials. Out-of-band 2FA dispatch processing...</span>")
         return jsonify({"success": True, "user_id": user['id'], "masked_email": masked_email, "expires_in": 300})
+    
+    broadcast_system_event(f"<span class='term-warn'>[AUTH FAILED] Rejected login parameters attempted for username: <strong>{username}</strong></span>")
     return jsonify({"success": False, "message": "Invalid credentials."}), 401
 
 
@@ -292,11 +326,14 @@ def api_verify_otp():
         return jsonify({"success": False, "message": "Verification session footprint has expired."}), 401
         
     if session['otp'] != otp_code:
+        broadcast_system_event("<span class='term-warn'>[2FA FAILED] Erroneous verification token rejected at authorization portal interface.</span>")
         return jsonify({"success": False, "message": "Clearance signature verification failed."}), 401
 
     ACTIVE_OTP_STORE.pop(user_id, None)
     placeholder = "%s" if IS_POSTGRES else "?"
     user = execute_query(f"SELECT * FROM users WHERE id = {placeholder}", (user_id,), fetch_one=True)
+    
+    broadcast_system_event(f"<span class='term-success'>[LOGIN COMPLETE] User <strong>{user['username']}</strong> passed 2FA checks. Session opened.</span>")
     return jsonify({"success": True, "user_id": user['id'], "user_info": {"full_name": user['full_name'], "matric_no": user['matric_no']}})
 
 
@@ -380,6 +417,7 @@ def api_google_auth():
             return jsonify({"success": False, "message": f"Verified address [{user_email}] has no matrix mapping record."}), 404
 
         write_auth_log(user['username'], "Google Federated SSO Handshake", "SUCCESS")
+        broadcast_system_event(f"<span class='term-success'>[GOOGLE LOGIN] User <strong>{user['username']}</strong> signed in via federated OAuth proof token.</span>")
         return jsonify({"success": True, "user_id": user['id'], "user_info": {"full_name": user['full_name'], "matric_no": user['matric_no']}})
     except Exception as e:
         return jsonify({"success": False, "message": f"Federation module exception: {str(e)}", "SUCCESS": False}), 500
@@ -410,6 +448,7 @@ def admin_update_user(user_id):
 
         placeholder = "%s" if IS_POSTGRES else "?"
         execute_query(f"UPDATE users SET full_name={placeholder}, matric_no={placeholder}, email={placeholder} WHERE id={placeholder}", (full_name, matric_no, email, user_id), commit=True)
+        broadcast_system_event(f"<span>[DB PROFILE UPDATE] Row ID {user_id} modified inside administrative directory database.</span>")
         return jsonify({"success": True})
     except Exception as e:
         return jsonify({"success": False, "message": str(e)}), 500
@@ -423,6 +462,7 @@ def admin_delete_user(user_id):
     try:
         placeholder = "%s" if IS_POSTGRES else "?"
         execute_query(f"DELETE FROM users WHERE id = {placeholder}", (user_id,), commit=True)
+        broadcast_system_event(f"<span class='term-warn'>[DB PURGE] Row tracking ID {user_id} dropped from persistent infrastructure.</span>")
         return jsonify({"success": True})
     except Exception as e:
         return jsonify({"success": False, "message": str(e)}), 500
