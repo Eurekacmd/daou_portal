@@ -7,6 +7,7 @@ import csv
 import io
 from email.mime.text import MIMEText
 from flask import Flask, request, jsonify, render_template, Response
+from celery import Celery  # Imported for distributed async task running
 
 # Cryptographic Federated Verification Imports
 from google.oauth2 import id_token
@@ -25,6 +26,14 @@ app = Flask(__name__)
 # Environmental Database Router System Layout Setup
 DATABASE_URL = os.environ.get('DATABASE_URL', 'database.db')
 IS_POSTGRES = DATABASE_URL.startswith("postgres://") or DATABASE_URL.startswith("postgresql://")
+
+# Configure Celery to use Redis (Render provides a Redis service add-on easily)
+REDIS_URL = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
+celery_app = Celery(
+    app.import_name,
+    backend=REDIS_URL,
+    broker=REDIS_URL
+)
 
 # System Runtime State Control Flags
 CURRENT_SYSTEM_MODE = "user"
@@ -133,9 +142,14 @@ def write_auth_log(username, action, status):
     print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] MODE: {CURRENT_SYSTEM_MODE.upper()} | USER: {username} | ACTION: {action} | STATUS: {status}")
 
 
-def send_otp_email(recipient_email, full_name, otp_code):
+@celery_app.task(bind=True, max_retries=3, default_retry_delay=10)
+def send_otp_email_task(self, recipient_email, full_name, otp_code):
+    """
+    Asynchronous Celery Task runner.
+    Bypasses the web execution process context entirely so network delay cannot hang the client UI.
+    """
     if not SMTP_USER or not SMTP_PASS:
-        write_auth_log("SYSTEM", "SMTP credentials missing from environment settings!", "ERROR")
+        print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [CELERY WORKER] ERROR: SMTP credentials missing!")
         return False
 
     subject = "Your DAOU Portal Security Code"
@@ -153,28 +167,22 @@ def send_otp_email(recipient_email, full_name, otp_code):
     msg['To'] = recipient_email
 
     try:
-        write_auth_log("SYSTEM", f"Attempting SMTP SSL handshake via {SMTP_HOST}:465", "INIT")
         with smtplib.SMTP_SSL(SMTP_HOST, 465, timeout=10) as server:
             server.login(SMTP_USER, SMTP_PASS)
             server.sendmail(SMTP_USER, [recipient_email], msg.as_string())
-        write_auth_log("SYSTEM", f"OTP successfully dispatched via SSL to {recipient_email}", "SUCCESS")
         return True
     except Exception as e_ssl:
-        write_auth_log("SYSTEM", f"SMTP SSL Port 465 transmission failed: {str(e_ssl)}", "WARN")
-
-    try:
-        write_auth_log("SYSTEM", f"Attempting fallback SMTP TLS handshake via {SMTP_HOST}:587", "INIT")
-        with smtplib.SMTP(SMTP_HOST, 587, timeout=10) as server:
-            server.ehlo()
-            server.starttls()
-            server.ehlo()
-            server.login(SMTP_USER, SMTP_PASS)
-            server.sendmail(SMTP_USER, [recipient_email], msg.as_string())
-        write_auth_log("SYSTEM", f"OTP successfully dispatched via TLS Fallback to {recipient_email}", "SUCCESS")
-        return True
-    except Exception as e_tls:
-        write_auth_log("SYSTEM", f"SMTP TLS Port 587 transmission failed: {str(e_tls)}", "ERROR")
-        return False
+        try:
+            with smtplib.SMTP(SMTP_HOST, 587, timeout=10) as server:
+                server.ehlo()
+                server.starttls()
+                server.ehlo()
+                server.login(SMTP_USER, SMTP_PASS)
+                server.sendmail(SMTP_USER, [recipient_email], msg.as_string())
+            return True
+        except Exception as e_tls:
+            # If both fail due to Render's free tier limits or strict firewall configurations, retry automatically
+            raise self.retry(exc=e_tls)
 
 
 @app.route('/')
@@ -247,8 +255,10 @@ def api_login():
         generated_otp = str(random.randint(100000, 999999))
         ACTIVE_OTP_STORE[str(user['id'])] = {"otp": generated_otp, "expires_at": time.time() + 300}
         
-        send_otp_email(email, user['full_name'], generated_otp)
-        write_auth_log(username, "Primary Credential Verification", "SUCCESS")
+        # Enqueue the task asynchronously to Celery Redis Broker
+        send_otp_email_task.delay(email, user['full_name'], generated_otp)
+        
+        write_auth_log(username, "Primary Credential Verification -> Offloaded to Celery Queue", "SUCCESS")
         return jsonify({"success": True, "user_id": user['id'], "masked_email": masked_email, "expires_in": 300})
     return jsonify({"success": False, "message": "Invalid credentials."}), 401
 
@@ -277,7 +287,6 @@ def api_verify_otp():
 
 @app.route('/api/ratings', methods=['POST'])
 def submit_rating():
-    """Type-safe execution endpoint framework securely tracking dashboard metric payloads."""
     try:
         data = request.json or {}
         user_id = data.get('user_id')
