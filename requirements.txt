@@ -43,3 +43,4 @@ webauthn==3.0.0
 Werkzeug==3.1.8
 Flask-SQLAlchemy
 gunicorn
+python-3.11.9
