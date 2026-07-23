@@ -4,6 +4,9 @@ import time
 import csv
 import io
 import secrets
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from datetime import datetime
 from flask import Flask, jsonify, request, Response, stream_with_context, render_template, make_response
 
@@ -57,6 +60,36 @@ class TelemetryQueue:
         if self.messages:
             return self.messages.pop(0)
         return None
+
+def send_smtp_otp_email(recipient_email, otp_code):
+    """Sends the actual OTP email using SMTP configurations from environment variables."""
+    smtp_server = "smtp.gmail.com"
+    smtp_port = int(os.environ.get('SMTP_PORT', 587))
+    sender_email = os.environ.get('GMAIL_USER')
+    sender_password = os.environ.get('GMAIL_APP_PASSWORD')
+
+    if not sender_email or not sender_password:
+        print(f"[SIMULATED EMAIL] OTP Code for {recipient_email}: {otp_code}")
+        return False
+
+    try:
+        msg = MIMEMultipart()
+        msg['From'] = sender_email
+        msg['To'] = recipient_email
+        msg['Subject'] = "DAOU Portal Security Verification Code"
+
+        body = f"Your 6-digit security authentication code is: {otp_code}\nThis code will expire in 5 minutes."
+        msg.attach(MIMEText(body, 'plain'))
+
+        server = smtplib.SMTP(smtp_server, smtp_port)
+        server.starttls()
+        server.login(sender_email, sender_password)
+        server.sendmail(sender_email, recipient_email, msg.as_string())
+        server.quit()
+        return True
+    except Exception as e:
+        print(f"[SMTP ERROR] Failed to dispatch email: {e}")
+        return False
 
 # --- REQUEST HOOK FOR ACTIVITY TRACKING ---
 
@@ -140,10 +173,15 @@ def handle_login():
         "expires_at": time.time() + expiration_window
     }
 
+    # Attempt to send real email via SMTP, fallback to telemetry log simulation if credentials aren't set
+    email_sent = send_smtp_otp_email(user['email'], otp)
+    if email_sent:
+        emit_telemetry(f"<span class='term-success'>[EMAIL DISPATCHED] Security OTP code successfully sent via SMTP to {user['email']}</span>")
+    else:
+        emit_telemetry(f"[MFA SIMULATED] Security OTP code ({otp}) generated for user ID: {user['id']}")
+
     email_parts = user['email'].split('@')
     masked_email = f"{email_parts[0][:3]}***@{email_parts[1]}"
-
-    emit_telemetry(f"[MFA DISPATCHED] Security OTP code ({otp}) sent down to virtual email spooler for user ID: {user['id']}")
     
     return jsonify({
         "success": True,
