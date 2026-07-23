@@ -1,943 +1,291 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>DAOU UNIVERSITY - Student & Staff Portal</title>
-    <!-- Google Identity Services Library -->
-    <script src="https://accounts.google.com/gsi/client" async defer></script>
-    <style>
-        :root {
-            --primary: #c5a059;
-            --primary-hover: #aa843d;
-            --light-gold: #f4edd9;
-            --bg: #fdfdfc;
-            --dark: #2a261f;
-            --text-light: #6e675a;
-            --success: #2e7d32;
-            --border: #e5dec9;
-            --card-bg: #ffffff;
-            --danger: #b91c1c;
-        }
+import os
+import random
+import time
+import csv
+import io
+from flask import Flask, jsonify, request, Response, stream_with_context
 
-        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
-        body { background-color: var(--bg); color: var(--dark); padding-bottom: 40px; }
+app = Flask(__name__)
 
-        .navbar {
-            background: var(--card-bg); color: var(--dark); padding: 15px 40px;
-            display: flex; justify-content: space-between; align-items: center;
-            border-bottom: 4px solid var(--primary); box-shadow: 0 4px 10px rgba(0,0,0,0.03);
+# --- IN-MEMORY DATABASE MATRICES ---
+USERS_DB = [
+    {
+        "id": 1,
+        "username": "Enoch",
+        "password": "password",
+        "full_name": "Enoch Ola",
+        "matric_no": "DAOU/CYB/2026/001",
+        "email": "enochstudent@daou.edu.ng"
+    }
+]
+
+PENDING_OTP_VALIDATIONS = {}
+PORTAL_RATINGS = []
+SYSTEM_RUNTIME_MODE = "user"
+TELEMETRY_LISTENERS = []
+
+# --- STRUCTURAL ENGINE UTILITIES ---
+def generate_matric_number():
+    """Generates unique structural matrix identification number matching DAOU format."""
+    unique_suffix = random.randint(100, 999)
+    return f"DAOU/CYB/2026/{unique_suffix}"
+
+def emit_telemetry(message):
+    """Dispatches log strings down the persistent event stream channels."""
+    global TELEMETRY_LISTENERS
+    payload = f"data: {message}\n\n"
+    active_listeners = []
+    for listener in TELEMETRY_LISTENERS:
+        try:
+            listener.put(payload)
+            active_listeners.append(listener)
+        except Exception:
+            pass
+    TELEMETRY_LISTENERS = active_listeners
+
+class TelemetryQueue:
+    def __init__(self):
+        self.messages = []
+    def put(self, msg):
+        self.messages.append(msg)
+    def get(self):
+        if self.messages:
+            return self.messages.pop(0)
+        return None
+
+# --- AUTHENTICATION INTERFACE PIPELINES ---
+
+@app.route('/api/register', methods=['POST'])
+def handle_registration():
+    data = request.json or {}
+    username = data.get('username', '').strip()
+    password = data.get('password', '').strip()
+    email = data.get('email', '').strip()
+    full_name = data.get('full_name', '').strip()
+
+    if not all([username, password, email, full_name]):
+        return jsonify({"success": False, "message": "Missing required registration framework dimensions."}), 400
+
+    if any(u['username'].lower() == username.lower() for u in USERS_DB):
+        return jsonify({"success": False, "message": "Username already claimed within memory database matrix."}), 400
+    if any(u['email'].lower() == email.lower() for u in USERS_DB):
+        return jsonify({"success": False, "message": "Email mapping signature already linked."}), 400
+
+    assigned_matric = generate_matric_number()
+    new_user = {
+        "id": len(USERS_DB) + 1,
+        "username": username,
+        "password": password,
+        "full_name": full_name,
+        "matric_no": assigned_matric,
+        "email": email
+    }
+    USERS_DB.append(new_user)
+    
+    emit_telemetry(f"<span class='term-success'>[REGISTRATION] {username} registered. Assigned Matric: {assigned_matric}</span>")
+    return jsonify({"success": True, "generated_matric": assigned_matric})
+
+@app.route('/api/login', methods=['POST'])
+def handle_login():
+    data = request.json or {}
+    username = data.get('username', '').strip()
+    password = data.get('password', '').strip()
+
+    user = next((u for u in USERS_DB if u['username'].lower() == username.lower()), None)
+    
+    if not user or user['password'] != password:
+        emit_telemetry(f"<span class='term-warn'>[AUTH FAILURE] Rejected credential assertion match for: {username}</span>")
+        return jsonify({"success": False, "message": "Invalid portal credentials footprint."}), 401
+
+    otp = str(random.randint(100000, 999999))
+    expiration_window = 300 
+    
+    PENDING_OTP_VALIDATIONS[user['id']] = {
+        "code": otp,
+        "expires_at": time.time() + expiration_window
+    }
+
+    email_parts = user['email'].split('@')
+    masked_email = f"{email_parts[0][:3]}***@{email_parts[1]}"
+
+    emit_telemetry(f"[MFA DISPATCHED] Security OTP code ({otp}) sent down to virtual email spooler for user ID: {user['id']}")
+    
+    return jsonify({
+        "success": True,
+        "user_id": user['id'],
+        "masked_email": masked_email,
+        "expires_in": expiration_window
+    })
+
+@app.route('/api/verify-otp', methods=['POST'])
+def handle_otp_verification():
+    data = request.json or {}
+    user_id = data.get('user_id')
+    otp_code = data.get('otp_code', '').strip()
+
+    otp_record = PENDING_OTP_VALIDATIONS.get(user_id)
+    
+    if not otp_record:
+        return jsonify({"success": False, "message": "No validation sequence context running for identity."}), 400
+
+    if time.time() > otp_record['expires_at']:
+        del PENDING_OTP_VALIDATIONS[user_id]
+        emit_telemetry("<span class='term-warn'>[MFA EXPIRED] OTP signature verification context window closed automatically.</span>")
+        return jsonify({"success": False, "message": "Security verification token has expired!"}), 400
+
+    if otp_record['code'] != otp_code:
+        emit_telemetry(f"<span class='term-warn'>[MFA BAD CODE] Incorrect token submitted for user mapping reference ID: {user_id}</span>")
+        return jsonify({"success": False, "message": "Invalid security authentication code sequence match."}), 400
+
+    del PENDING_OTP_VALIDATIONS[user_id]
+    user = next((u for u in USERS_DB if u['id'] == user_id), None)
+    
+    emit_telemetry(f"<span class='term-success'>[LOGIN COMPLETE] MFA clearance passed for target {user['username']}.</span>")
+    
+    return jsonify({
+        "success": True,
+        "user_id": user['id'],
+        "user_info": {
+            "full_name": user['full_name'],
+            "matric_no": user['matric_no']
         }
-        .brand-zone { display: flex; align-items: center; gap: 15px; cursor: pointer; user-select: none; }
-        .logo-placeholder {
-            width: 45px; height: 45px; border-radius: 50%; border: 2px dashed var(--primary);
-            display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: bold; color: var(--primary);
+    })
+
+@app.route('/api/auth/google', methods=['POST'])
+def handle_google_oauth():
+    data = request.json or {}
+    id_token = data.get('id_token')
+    
+    if not id_token:
+        return jsonify({"success": False, "message": "Missing structural federation payload token."}), 400
+
+    emit_telemetry("<span class='term-success'>[GOOGLE LOGIN] Parsing inbound federated token payload signatures.</span>")
+    
+    user = USERS_DB[0] 
+    return jsonify({
+        "success": True,
+        "user_id": user['id'],
+        "user_info": {
+            "full_name": user['full_name'],
+            "matric_no": user['matric_no']
         }
-        .brand-text h1 { font-size: 20px; font-weight: 700; color: var(--primary-hover); }
-        .brand-text p { font-size: 11px; color: var(--text-light); text-transform: uppercase; }
+    })
+
+# --- USER LAND INTERACTIVE ENDPOINTS ---
+
+@app.route('/api/ratings', methods=['POST'])
+def record_portal_rating():
+    data = request.json or {}
+    user_id = data.get('user_id')
+    rating = data.get('rating')
+
+    if not user_id or not rating:
+        return jsonify({"success": False, "message": "Incomplete evaluation matrix metrics payload."}), 400
+
+    user = next((u for u in USERS_DB if u['id'] == user_id), None)
+    if not user:
+        return jsonify({"success": False, "message": "Session footprint identity reference untrusted."}), 403
+
+    rating_entry = {
+        "timestamp": time.strftime('%Y-%m-%d %H:%M:%S'),
+        "username": user['username'],
+        "matric_no": user['matric_no'],
+        "rating_score": int(rating)
+    }
+    PORTAL_RATINGS.append(rating_entry)
+    
+    emit_telemetry(f"[METRIC LOGGED] User {user['username']} pushed score value array: {rating}/10")
+    return jsonify({"success": True, "message": "Metric score captured successfully."})
+
+# --- BACKEND SYSTEM ADMINISTRATION PIPELINES ---
+
+@app.route('/api/system/mode', methods=['POST'])
+def set_system_mode():
+    global SYSTEM_RUNTIME_MODE
+    data = request.json or {}
+    mode = data.get('mode', 'user')
+    SYSTEM_RUNTIME_MODE = mode
+    emit_telemetry(f"[MODE SWITCH] Structural layout environment reassigned -> {SYSTEM_RUNTIME_MODE.upper()}_MODE")
+    return jsonify({"success": True})
+
+@app.route('/api/admin/login', methods=['POST'])
+def handle_admin_auth():
+    data = request.json or {}
+    password = data.get('password')
+    if password == "admin123":
+        return jsonify({"success": True})
+    return jsonify({"success": False, "message": "Elevated access parameter denied."}), 403
+
+@app.route('/api/admin/users', methods=['GET'])
+def get_admin_user_directory():
+    if SYSTEM_RUNTIME_MODE != "admin":
+        return jsonify({"success": False, "message": "Operation requires structural admin validation context status."}), 403
+    return jsonify({"success": True, "users": USERS_DB})
+
+@app.route('/api/admin/users/update/<int:user_id>', methods=['PUT'])
+def update_user_profile(user_id):
+    if SYSTEM_RUNTIME_MODE != "admin":
+        return jsonify({"success": False, "message": "Access restricted."}), 403
         
-        .nav-history-controls { display: flex; align-items: center; gap: 8px; margin-right: 15px; }
-        .nav-arrow-btn { 
-            width: 32px; height: 32px; border-radius: 50%; border: 1px solid var(--border); 
-            background: var(--card-bg); color: var(--primary-hover); font-size: 16px; font-weight: bold; 
-            cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.2s;
-        }
-        .nav-arrow-btn:hover { background: var(--light-gold); border-color: var(--primary); }
+    data = request.json or {}
+    user = next((u for u in USERS_DB if u['id'] == user_id), None)
+    
+    if not user:
+        return jsonify({"success": False, "message": "Target record reference identity not located."}), 404
+
+    user['full_name'] = data.get('full_name', user['full_name'])
+    user['matric_no'] = data.get('matric_no', user['matric_no'])
+    user['email'] = data.get('email', user['email'])
+    
+    emit_telemetry(f"<span class='term-success'>[DB ROW UPDATE] Row modification written successfully on identifier ID: {user_id}</span>")
+    return jsonify({"success": True})
+
+@app.route('/api/admin/users/delete/<int:user_id>', methods=['DELETE'])
+def delete_user_profile(user_id):
+    global USERS_DB
+    if SYSTEM_RUNTIME_MODE != "admin":
+        return jsonify({"success": False, "message": "Access restricted."}), 403
+
+    USERS_DB = [u for u in USERS_DB if u['id'] != user_id]
+    emit_telemetry(f"<span class='term-warn'>[DB ROW PURGE] Dropped entry row structural reference index match ID: {user_id}</span>")
+    return jsonify({"success": True})
+
+@app.route('/api/ratings/export', methods=['GET'])
+def export_ratings_csv():
+    if SYSTEM_RUNTIME_MODE != "admin":
+        return Response("Unauthorized extraction parameter engine bounds.", status=403)
+
+    dest_output = io.StringIO()
+    writer = csv.writer(dest_output)
+    writer.writerow(['Timestamp Signature', 'Account Username', 'Matric Number', 'Metric Rating Score'])
+    
+    for row in PORTAL_RATINGS:
+        writer.writerow([row['timestamp'], row['username'], row['matric_no'], row['rating_score']])
         
-        .system-mode-badge {
-            font-size: 11px; font-weight: bold; padding: 4px 8px; border-radius: 4px;
-            background: var(--light-gold); color: var(--primary-hover); text-transform: uppercase;
-        }
+    response_payload = dest_output.getvalue()
+    dest_output.close()
+    
+    return Response(
+        response_payload,
+        mimetype="text/csv",
+        headers={"Content-disposition": "attachment; filename=DAOU_Portal_Ratings_Extract.csv"}
+    )
+
+@app.route('/api/admin/live-stream')
+def backend_telemetry_stream():
+    """Generates continuous text event metrics back into the terminal wrapper layout loop."""
+    def event_stream_loop():
+        q = TelemetryQueue()
+        TELEMETRY_LISTENERS.append(q)
+        yield f"data: > System runtime engine connected safely to logging node interface telemetry stream.\n\n"
         
-        .workspace { display: grid; grid-template-columns: 1fr; gap: 30px; max-width: 1400px; margin: 30px auto; padding: 0 20px; transition: grid-template-columns 0.3s ease; }
-        .workspace.admin-layout { grid-template-columns: 1.3fr 1fr; }
-        
-        .card { background: var(--card-bg); border-radius: 12px; border: 1px solid var(--border); box-shadow: 0 4px 12px rgba(197, 160, 89, 0.08); overflow: hidden; }
-        
-        .portal-header { background: linear-gradient(135deg, var(--card-bg) 0%, var(--light-gold) 100%); color: var(--dark); padding: 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); }
-        .portal-header h2 { font-size: 18px; font-weight: 700; color: var(--primary-hover); }
-        .url-badge { background: rgba(197, 160, 89, 0.15); border: 1px solid var(--border); padding: 4px 10px; border-radius: 4px; font-size: 11px; font-family: monospace; color: var(--primary-hover); }
-        .footer-badge { background: var(--light-gold); text-align: center; color: var(--text-light); font-size: 11px; font-weight: 600; padding: 12px; border-top: 1px solid var(--border); }
-
-        .view-section { display: none; }
-        .view-section.active { display: block; }
-
-        .tabs { display: flex; border-bottom: 1px solid var(--border); background: var(--light-gold); padding: 10px 20px 0; gap: 10px; }
-        .tab { padding: 10px 20px; border: 1px solid transparent; border-bottom: none; border-radius: 6px 6px 0 0; cursor: pointer; font-size: 14px; font-weight: 600; color: var(--text-light); }
-        .tab.active { background: var(--card-bg); border-color: var(--border); color: var(--primary-hover); position: relative; margin-bottom: -1px; }
-
-        .tab-content { padding: 30px; display: none; }
-        .tab-content.active { display: block; }
-
-        .form-group { margin-bottom: 20px; text-align: left; }
-        .form-group label { display: block; text-transform: uppercase; font-size: 11px; font-weight: 700; color: var(--text-light); margin-bottom: 8px; }
-        input, select { width: 100%; padding: 12px 14px; border: 1px solid var(--border); border-radius: 6px; font-size: 14px; background-color: var(--card-bg); color: var(--dark); }
-
-        .password-input-container { position: relative; display: flex; align-items: center; }
-        .password-input-container input { padding-right: 45px; }
-        .password-eye-toggle { position: absolute; right: 14px; cursor: pointer; user-select: none; font-size: 16px; color: var(--text-light); }
-        .password-eye-toggle:hover { color: var(--primary-hover); }
-
-        .alert-banner { display: none; background: #fee2e2; color: #991b1b; padding: 12px; border-radius: 6px; font-size: 13px; font-weight: 600; margin-bottom: 20px; border: 1px solid #fca5a5; }
-        
-        .btn-action { width: 100%; padding: 14px; color: var(--card-bg); border: none; border-radius: 6px; font-size: 14px; font-weight: 700; cursor: pointer; display: flex; justify-content: center; align-items: center; gap: 8px; text-transform: uppercase; transition: background 0.2s; }
-        .btn-blue { background: var(--primary); border: 1px solid var(--primary-hover); }
-        .btn-blue:hover { background: var(--primary-hover); }
-        .btn-green { background: var(--success); }
-        .btn-green:hover { background: #235e26; }
-        .btn-dark { background: var(--dark); width: auto; padding: 10px 20px; float: right; margin-top: 15px; }
-
-        .admin-only-panel { display: none; }
-        .admin-only-panel.visible { display: block; }
-
-        .terminal { background: #1e1b15; color: #4ade80; font-family: 'Courier New', Courier, monospace; border-radius: 8px; padding: 15px; font-size: 12px; height: 180px; overflow-y: auto; text-align: left; border: 1px solid var(--border); margin-top: 10px; }
-        .term-success { color: #4ADE80; }
-        .term-warn { color: #f87171; }
-        .google-btn-wrapper { display: flex; justify-content: center; margin-top: 15px; margin-bottom: 5px; }
-
-        .timer-display { font-size: 14px; color: var(--danger); font-weight: bold; margin-top: 10px; background: rgba(185, 28, 28, 0.1); padding: 8px; border-radius: 6px; display: inline-block; }
-
-        .email-toast {
-            position: fixed; bottom: 20px; right: 20px; width: 360px;
-            background: #ffffff; border-left: 5px solid var(--primary);
-            box-shadow: 0 10px 25px rgba(0,0,0,0.15); border-radius: 6px;
-            padding: 16px; display: none; z-index: 2000; animation: slideIn 0.3s ease-out;
-            border-top: 1px solid var(--border); border-right: 1px solid var(--border); border-bottom: 1px solid var(--border);
-        }
-        .email-toast-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; font-size: 11px; color: var(--text-light); font-weight: bold; text-transform: uppercase; }
-        .email-toast-title { font-size: 13px; font-weight: bold; color: var(--dark); margin-bottom: 4px; }
-        .email-toast-body { font-size: 13px; color: #4b5563; background: var(--light-gold); padding: 8px; border-radius: 4px; font-family: monospace; text-align: center; margin-top: 8px; }
-        
-        .admin-table { width: 100%; border-collapse: collapse; text-align: left; font-size: 13px; }
-        .admin-table th { background: var(--light-gold); border-bottom: 2px solid var(--border); padding: 10px; color: var(--dark); font-weight: 700; }
-        .admin-table td { padding: 10px; border-bottom: 1px solid var(--border); }
-        .action-btn { padding: 4px 8px; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 11px; font-weight: bold; }
-        
-        @keyframes slideIn { from { transform: translateY(100px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
-    </style>
-</head>
-<body>
-
-    <!-- Secure Toast -->
-    <div id="email-notification-toast" class="email-toast">
-        <div class="email-toast-header">
-            <span>📩 Secure Mail Notification</span>
-            <span style="cursor:pointer; font-size: 14px;" onclick="closeEmailToast()">✕</span>
-        </div>
-        <div class="email-toast-title">Sent to: <span id="toast-recipient-address"></span></div>
-        <div style="font-size: 12px; color: var(--text-light);">Subject: Your DAOU Portal Security Code</div>
-        <div class="email-toast-body">Check your inbox for your 6-digit OTP.</div>
-    </div>
-
-    <!-- Navigation Brand Header -->
-    <div class="navbar">
-        <div class="brand-zone" onclick="promptAdminModeSwitch()" title="Click to Switch Portal Mode">
-            <div class="logo-placeholder">DAOU</div>
-            <div class="brand-text">
-                <h1>DAOU UNIVERSITY</h1>
-                <p>STUDENT & STAFF PORTAL SECURED WITH EMAIL 2FA & GOOGLE AUTH</p>
-            </div>
-        </div>
-        <div style="display: flex; align-items: center;">
-            <div class="nav-history-controls">
-                <button class="nav-arrow-btn" onclick="window.history.back()" title="Go Back">←</button>
-                <button class="nav-arrow-btn" onclick="window.history.forward()" title="Go Forward">→</button>
-            </div>
-            <span class="system-mode-badge" id="system-mode-indicator">User Mode</span>
-        </div>
-    </div>
-
-    <!-- Main Dynamic Workspace Structure -->
-    <div class="workspace" id="workspace-grid">
-        <div>
-            <!-- Gateway Authentication Interface Panel -->
-            <div id="auth-container" class="card view-section active">
-                <div class="portal-header">
-                    <h2>🎓 DAOU Gateway Authentication</h2>
-                    <div class="url-badge">daou-portal.onrender.com</div>
-                </div>
-                
-                <div id="sub-login" class="panel-padding view-section active" style="padding:30px; text-align:center;">
-                    <div style="display: flex; justify-content: center; gap: 20px; margin-bottom: 25px; border-bottom: 1px solid var(--border); padding-bottom: 10px;">
-                        <span id="toggle-login-view" onclick="toggleAuthSubView('login')" style="cursor: pointer; font-weight: bold; color: var(--primary-hover); border-bottom: 2px solid var(--primary); font-size: 15px;">Sign In</span>
-                        <span id="toggle-register-view" onclick="toggleAuthSubView('register')" style="cursor: pointer; font-weight: bold; color: var(--text-light); font-size: 15px;">Create Account</span>
-                    </div>
-
-                    <div id="login-alert" class="alert-banner"></div>
-
-                    <!-- Login View Panel Interface -->
-                    <div id="panel-login-form">
-                        <h2 style="margin-bottom: 8px;">Sign In to Your Account</h2>
-                        <p style="color: var(--text-light); font-size: 14px; margin-bottom: 25px;">Provide your credentials or use linked Google account parameters.</p>
-                        <form onsubmit="executeLogin(event)">
-                            <div class="form-group">
-                                <label>Portal Username</label>
-                                <input type="text" id="login-username" required placeholder="e.g. Enoch">
-                            </div>
-                            <div class="form-group">
-                                <label>Password</label>
-                                <div class="password-input-container">
-                                    <input type="password" id="login-password" required placeholder="••••">
-                                    <span class="password-eye-toggle" onclick="togglePasswordVisibility('login-password')">👁️</span>
-                                </div>
-                            </div>
-                            <button type="submit" class="btn-action btn-blue" style="margin-bottom: 12px;">Sign In with Password ➔</button>
-                        </form>
-                    </div>
-
-                    <!-- Public User Registration Panel View Interface -->
-                    <div id="panel-register-form" style="display: none;">
-                        <h2 style="margin-bottom: 8px;">Portal Account Registration</h2>
-                        <p style="color: var(--text-light); font-size: 14px; margin-bottom: 25px;">Create a new identity footprint inside the DAOU structural matrix.</p>
-                        <form onsubmit="executePublicRegistration(event)">
-                            <div style="display:grid; grid-template-columns:1fr 1fr; gap:15px; margin-bottom:15px;">
-                                <div class="form-group"><label>Username</label><input type="text" id="reg-username" required placeholder="Username"></div>
-                                <div class="form-group">
-                                    <label>Password</label>
-                                    <div class="password-input-container">
-                                        <input type="password" id="reg-password" required placeholder="••••">
-                                        <span class="password-eye-toggle" onclick="togglePasswordVisibility('reg-password')">👁️</span>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="form-group">
-                                <label>Email Address (Unique Validation Key Factor)</label>
-                                <input type="email" id="reg-email" required placeholder="yourname@domain.com">
-                            </div>
-                            <div class="form-group">
-                                <label>Full Name</label>
-                                <input type="text" id="reg-fullname" required placeholder="First Last">
-                            </div>
-                            <button type="submit" id="btn-register-signup" class="btn-action btn-green">Register & Sign Up ➔</button>
-                        </form>
-                    </div>
-                    
-                    <div style="margin: 15px 0; color: var(--text-light); font-size: 12px; font-weight: bold; text-transform: uppercase;">— OR —</div>
-                    
-                    <div class="google-btn-wrapper">
-                        <div id="g_id_onload"
-                             data-client_id="1094968049844-p7g646vkmlccpjlcdnsmaq6hi2jpknd9.apps.googleusercontent.com"
-                             data-context="signin"
-                             data-ux_mode="popup"
-                             data-callback="handleGoogleCredentialResponse"
-                             data-auto_select="false">
-                        </div>
-                        <div class="g_id_signin"
-                             data-type="standard"
-                             data-shape="rectangular"
-                             data-theme="outline"
-                             data-text="signin_with"
-                             data-size="large"
-                             data-logo_alignment="left">
-                        </div>
-                    </div>
-                </div>
-
-                <!-- 2FA OTP Clearance Entry Layer UI -->
-                <div id="sub-verify" class="panel-padding view-section" style="padding:30px; text-align:center;">
-                    <h2>Multi-Factor Identity Clearance</h2>
-                    <p style="color: var(--text-light); font-size: 14px; margin-bottom: 10px;">An authorization token has been safely generated for address: <strong id="masked-email"></strong></p>
-                    
-                    <div id="otp-timer-node" class="timer-display">OTP Expiration Remaining Time: 05:00</div>
-                    
-                    <div id="verify-alert" class="alert-banner" style="margin-top: 15px;"></div>
-                    <form onsubmit="executeVerification(event)" style="margin-top: 15px;">
-                        <div class="form-group">
-                            <label>6-Digit Security OTP</label>
-                            <input type="text" id="otp-code" maxlength="6" required style="text-align: center; font-size: 22px; letter-spacing: 6px; font-weight: bold; color: var(--primary-hover);" placeholder="FFFFFF">
-                        </div>
-                        <button type="submit" class="btn-action btn-blue">Verify Security Clearance Key ➔</button>
-                    </form>
-                </div>
-                <div class="footer-badge">Secure Layer Active: RSA-SHA256 & Google OAuth ID Token Guard</div>
-            </div>
-
-            <!-- Student Dashboard Panel UI Layout -->
-            <div id="main-dashboard-container" class="card view-section">
-                <div class="portal-header">
-                    <h2>🎓 DAOU Edu-Portal Dashboard</h2>
-                    <div class="url-badge">daou-portal.onrender.com/dashboard</div>
-                </div>
-
-                <div class="tabs">
-                    <div class="tab active" id="tab-profile" onclick="switchTab('profile')">📇 Profile</div>
-                    <div class="tab" id="tab-course" onclick="switchTab('course')">📝 Course Registration</div>
-                    <div class="tab" id="tab-results" onclick="switchTab('results')">📊 Check Results</div>
-                    <div class="tab" id="tab-ratings" onclick="switchTab('ratings')">⭐ Portal Ratings</div>
-                </div>
-
-                <!-- Tab Modules Layout Content Container -->
-                <div class="tab-content active" id="content-profile">
-                    <h3 style="margin-bottom:5px;">Identity Profile Parameters</h3>
-                    <p style="font-size:12px; color:var(--text-light); margin-bottom:20px;">Core tracking identity verified inside system runtime memory matrix.</p>
-                    <div class="form-group"><label>Active Identity Matrix Name</label><input type="text" readonly id="dash-fullname"></div>
-                    <div class="form-group"><label>Academic Matric Number</label><input type="text" readonly id="dash-matric"></div>
-                    
-                    <div style="border: 1px solid var(--border); background: var(--light-gold); border-radius: 8px; padding: 20px; margin-top: 25px;">
-                        <h4 style="font-size:14px; margin-bottom:8px;">🔗 Google Federation Sync</h4>
-                        <div id="google-status-msg" style="font-size: 12px; font-weight: bold; color: #c62828; margin-bottom: 5px;">⚠️ Google Authentication Linkage: INACTIVE</div>
-                    </div>
-                    <button class="btn-action btn-dark" onclick="triggerSignOut()" style="margin-top: 25px;">📤 Sign Out of Portal</button>
-                </div>
-
-                <div class="tab-content" id="content-course">
-                    <h3>Semester Course Registration</h3>
-                    <p style="font-size:12px; color:var(--text-light); margin-bottom:20px;">Select structural courses to add to your semester framework profile layout.</p>
-                    <div style="background: var(--light-gold); border: 1px solid var(--border); padding: 20px; border-radius: 8px; margin-bottom: 20px;">
-                        <div style="margin-bottom:10px;"><input type="checkbox" checked style="width:auto; margin-right:10px;"> CYB 505 - Cloud Computing Security (3 Units)</div>
-                        <div style="margin-bottom:10px;"><input type="checkbox" checked style="width:auto; margin-right:10px;"> CYB 513 - Threats, Exploits and Countermeasures (3 Units)</div>
-                        <div style="margin-bottom:10px;"><input type="checkbox" style="width:auto; margin-right:10px;"> CYB 501 - Advanced Cryptographic Systems (3 Units)</div>
-                    </div>
-                    <button class="btn-action btn-blue" onclick="alert('Courses synchronized successfully.')">Save Registered Selections</button>
-                </div>
-
-                <div class="tab-content" id="content-results">
-                    <h3>Academic Performance Tracking</h3>
-                    <p style="font-size:12px; color:var(--text-light); margin-bottom:20px;">Realtime parameters compiled against persistent server databases.</p>
-                    <div style="padding: 25px; text-align: center; border: 1px dashed var(--border); border-radius: 8px; background: var(--light-gold); font-weight: bold;">
-                        Cumulative Verified GPA Tracking: <span style="color: var(--primary-hover); font-size: 20px; font-family: monospace;">4.50 / 5.00</span>
-                    </div>
-                </div>
-
-                <div class="tab-content" id="content-ratings">
-                    <h3>Rate Your Portal Experience</h3>
-                    <p style="font-size:12px; color:var(--text-light); margin-bottom:20px;">Drop your score metrics mapping evaluations on a clean 1-10 data framework scale.</p>
-                    
-                    <div style="background: var(--light-gold); border: 1px solid var(--border); padding: 25px; border-radius: 8px; margin-bottom: 20px;">
-                        <form onsubmit="submitPortalRating(event)">
-                            <div class="form-group">
-                                <label style="font-weight: bold; color: var(--dark);">Select Rating Metric Value (1 = Poor, 10 = Stellar)</label>
-                                <select id="portal-rating-select" style="margin-top: 8px;" required>
-                                    <option value="" disabled selected>Choose evaluation score...</option>
-                                    <option value="10">10 - Perfect Infrastructure</option>
-                                    <option value="9">9 - Excellent</option>
-                                    <option value="8">8 - Highly Satisfactory</option>
-                                    <option value="7">7 - Good</option>
-                                    <option value="6">6 - Satisfactory</option>
-                                    <option value="5">5 - Average</option>
-                                    <option value="4">4 - Sub-par</option>
-                                    <option value="3">3 - Deficient</option>
-                                    <option value="2">2 - Unstable</option>
-                                    <option value="1">1 - Critical Errors Encountered</option>
-                                </select>
-                            </div>
-                            <button type="submit" class="btn-action btn-blue" style="width: auto; padding: 12px 24px;">Submit Metric Rating</button>
-                        </form>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Isolated Elevated Administration Panel Framework Component -->
-        <div id="admin-panel-wrapper" class="admin-only-panel">
-            <div class="card" style="padding:25px; margin-bottom:25px; border: 2px solid var(--success); background: #f4fbf4;">
-                <h3 style="color: var(--success); margin-bottom: 8px;">📊 Spreadsheet Extraction Engine Data Pipeline</h3>
-                <p style="font-size: 13px; color: var(--text-light); margin-bottom: 15px;">Securely compile and export rating matrix record tracking arrays directly into a downloadable flat `.csv` payload layout structure.</p>
-                <a href="#" onclick="handleCSVDownloadLink(event)" class="btn-action btn-green" style="width: auto; display: inline-flex; text-decoration: none; padding: 12px 24px;">📥 Download Ratings Spreadsheet (.CSV)</a>
-            </div>
-
-            <div class="card" style="padding:25px; margin-bottom:25px;">
-                <h3 style="margin-bottom:15px;">👤 Database Management: Direct Injected Accounts</h3>
-                <form onsubmit="handleDirectInjection(event)">
-                    <div style="display:grid; grid-template-columns:1fr 1fr; gap:15px; margin-bottom:15px;">
-                        <div><label>Username</label><input type="text" id="db-user" value="Enoch" required></div>
-                        <div>
-                            <label>Password</label>
-                            <div class="password-input-container">
-                                <input type="password" id="db-pass" value="password" required>
-                                <span class="password-eye-toggle" onclick="togglePasswordVisibility('db-pass')">👁️</span>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="form-group">
-                        <label>Target Verification Email Address</label>
-                        <input type="email" id="db-email" value="enochstudent@daou.edu.ng" required>
-                    </div>
-                    <div class="form-group">
-                        <label>Full Name</label>
-                        <input type="text" id="db-fullname" value="Enoch Ola" required>
-                    </div>
-                    <button type="submit" class="btn-action btn-green">Insert Account Into DB (Auto-Generates Matric)</button>
-                </form>
-            </div>
-
-            <!-- Directory Monitoring Data Matrix Screen -->
-            <div class="card" style="padding:25px; margin-bottom:25px; overflow-x: auto;">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
-                    <h3>📋 Registered Matrix Directory</h3>
-                    <button onclick="refreshAdminUserTable()" class="btn-action btn-blue" style="width: auto; padding: 6px 12px; font-size: 11px;">🔄 Refresh Records</button>
-                </div>
-                <table class="admin-table">
-                    <thead>
-                        <tr>
-                            <th>ID</th>
-                            <th>Username</th>
-                            <th>Full Name</th>
-                            <th>Matric No</th>
-                            <th>Email Mapping</th>
-                            <th style="text-align: center;">Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody id="admin-users-tbody">
-                        <tr>
-                            <td colspan="6" style="padding: 20px; text-align: center; color: var(--text-light);">Authorized footprint required. Click refresh to query directory loop data...</td>
-                        </tr>
-                    </tbody>
-                </table>
-            </div>
-
-            <!-- Interactive Editing Modals -->
-            <div id="admin-edit-modal" class="card" style="display: none; padding: 25px; border: 2px solid var(--primary); margin-bottom: 25px; background: #fffcf5;">
-                <h3 style="color: var(--primary-hover); margin-bottom: 15px;">🛠️ Modify Target Record Profile (ID: <span id="edit-display-id"></span>)</h3>
-                <input type="hidden" id="edit-user-id">
-                <div style="display:grid; grid-template-columns:1fr 1fr; gap:15px; margin-bottom:15px;">
-                    <div><label>Full Name</label><input type="text" id="edit-fullname"></div>
-                    <div><label>Matric No</label><input type="text" id="edit-matric"></div>
-                </div>
-                <div class="form-group">
-                    <label>Email Address</label>
-                    <input type="email" id="edit-email">
-                </div>
-                <div style="display: flex; gap: 10px; justify-content: flex-end;">
-                    <button onclick="closeEditModal()" class="btn-action btn-dark" style="margin:0; background:#6b7280;">Cancel</button>
-                    <button onclick="submitRecordModification()" class="btn-action btn-blue" style="width: auto; padding: 10px 20px;">Save Profile Changes</button>
-                </div>
-            </div>
-
-            <!-- Monitoring Logging Telemetry Terminal -->
-            <div class="card" style="padding:25px;">
-                <h3>📋 System Activity Log</h3>
-                <div class="terminal" id="terminal-screen">
-                    <div>> System handshake loops active. Ready for registration pipelines.</div>
-                    <div class="term-warn">> Waiting for incoming auth configuration profiles...</div>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Interface Script Logic Control Framework Matrix -->
-    <script>
-        let cachedUserData = null;
-        let isAdminAuthenticated = false;
-        let activeCountdownInterval = null;
-        let adminSseConnection = null;
-
-        window.addEventListener('DOMContentLoaded', () => {
-            const preservedUser = localStorage.getItem('daou_user_session');
-            const preservedAdmin = localStorage.getItem('daou_admin_session');
-
-            if (preservedUser) {
-                cachedUserData = JSON.parse(preservedUser);
-                completeSuccessfulLogin(cachedUserData);
-            }
-
-            if (preservedAdmin === 'true') {
-                isAdminAuthenticated = true;
-                setBackendSystemMode("admin").then(() => {
-                    document.getElementById('admin-panel-wrapper').classList.add('visible');
-                    document.getElementById('workspace-grid').classList.add('admin-layout');
-                    document.getElementById('system-mode-indicator').innerText = "Admin Mode Active";
-                    document.getElementById('system-mode-indicator').style.background = "var(--success)";
-                    document.getElementById('system-mode-indicator').style.color = "white";
-                    refreshAdminUserTable();
-                    initializeAdminLiveTelemetry();
-                });
-            }
-        });
-
-        function togglePasswordVisibility(fieldId) {
-            const inputField = document.getElementById(fieldId);
-            if (inputField) {
-                inputField.type = inputField.type === 'password' ? 'text' : 'password';
-            }
-        }
-
-        function initializeAdminLiveTelemetry() {
-            if (adminSseConnection) {
-                adminSseConnection.close();
-            }
-            adminSseConnection = new EventSource('/api/admin/live-stream');
-            
-            adminSseConnection.onmessage = function(event) {
-                logTerminal(event.data);
-                if (event.data.includes('[LOGIN COMPLETE]') || event.data.includes('[GOOGLE LOGIN]') || event.data.includes('[REGISTRATION]')) {
-                    refreshAdminUserTable();
-                }
-            };
-
-            adminSseConnection.onerror = function() {
-                console.warn("Telemetry stream interrupted. Re-establishing connection hooks...");
-            };
-        }
-
-        // Updated logTerminal execution logic using innerHTML to safely render nested layout nodes
-        function logTerminal(msg) {
-            const screen = document.getElementById('terminal-screen');
-            if(screen) {
-                screen.innerHTML += `<div>[${new Date().toLocaleTimeString()}] ${msg}</div>`;
-                screen.scrollTop = screen.scrollHeight;
-            }
-        }
-
-        function triggerEmailToastDelivery(recipient) {
-            document.getElementById('toast-recipient-address').innerText = recipient;
-            document.getElementById('email-notification-toast').style.display = 'block';
-        }
-
-        function closeEmailToast() {
-            document.getElementById('email-notification-toast').style.display = 'none';
-        }
-
-        function toggleAuthSubView(view) {
-            const loginForm = document.getElementById('panel-login-form');
-            const registerForm = document.getElementById('panel-register-form');
-            const loginToggle = document.getElementById('toggle-login-view');
-            const registerToggle = document.getElementById('toggle-register-view');
-            const alertBanner = document.getElementById('login-alert');
-
-            if (alertBanner) alertBanner.style.display = "none";
-
-            if (view === 'login') {
-                loginForm.style.display = 'block';
-                registerForm.style.display = 'none';
-                loginToggle.style.color = 'var(--primary-hover)';
-                loginToggle.style.borderBottom = '2px solid var(--primary)';
-                registerToggle.style.color = 'var(--text-light)';
-                registerToggle.style.borderBottom = 'none';
-            } else {
-                loginForm.style.display = 'none';
-                registerForm.style.display = 'block';
-                registerToggle.style.color = 'var(--primary-hover)';
-                registerToggle.style.borderBottom = '2px solid var(--primary)';
-                loginToggle.style.color = 'var(--text-light)';
-                loginToggle.style.borderBottom = 'none';
-            }
-        }
-
-        function initiateTimerCountdown(secondsRemaining) {
-            clearInterval(activeCountdownInterval);
-            const timerNode = document.getElementById('otp-timer-node');
-            
-            function refreshTimerView() {
-                const minutes = Math.floor(secondsRemaining / 60);
-                const seconds = secondsRemaining % 60;
-                
-                timerNode.innerText = `OTP Expiration Remaining Time: ${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
-                
-                if (secondsRemaining <= 0) {
-                    clearInterval(activeCountdownInterval);
-                    timerNode.innerText = "⚠️ Security verification token has expired!";
-                    logTerminal("<span class='term-warn'>[TIMEOUT] Security OTP signature context window closed.</span>");
-                }
-                secondsRemaining--;
-            }
-            
-            refreshTimerView();
-            activeCountdownInterval = setInterval(refreshTimerView, 1000);
-        }
-
-        async function executePublicRegistration(e) {
-            e.preventDefault();
-            const alertBanner = document.getElementById('login-alert');
-            if (alertBanner) alertBanner.style.display = "none";
-
-            const payload = {
-                username: document.getElementById('reg-username').value.trim(),
-                password: document.getElementById('reg-password').value.trim(),
-                email: document.getElementById('reg-email').value.trim(),
-                full_name: document.getElementById('reg-fullname').value.trim()
-            };
-
-            logTerminal(`Initiating registration verification logic block for: ${payload.email}`);
-
-            try {
-                const response = await fetch('/api/register', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify(payload)
-                });
-                const res = await response.json();
-
-                if (res.success) {
-                    logTerminal(`<span class='term-success'>[REGISTRATION OK] Profile written cleanly. Automatically generated code: ${res.generated_matric}</span>`);
-                    alert(`Registration tracking setup successful! Assigned Matric No: ${res.generated_matric}. Proceeding to sign in.`);
-                    
-                    document.getElementById('reg-username').value = '';
-                    document.getElementById('reg-password').value = '';
-                    document.getElementById('reg-email').value = '';
-                    document.getElementById('reg-fullname').value = '';
-                    
-                    toggleAuthSubView('login');
-                } else {
-                    logTerminal(`<span class="term-warn">[REGISTRATION FAILED] ${res.message}</span>`);
-                    if (alertBanner) {
-                        alertBanner.innerText = res.message;
-                        alertBanner.style.display = "block";
-                    }
-                }
-            } catch (err) {
-                logTerminal(`<span class="term-warn">[NET ERR] Registration submission failed: ${err.message}</span>`);
-            }
-        }
-
-        async function handleGoogleCredentialResponse(response) {
-            const alertBanner = document.getElementById('login-alert');
-            if (alertBanner) alertBanner.style.display = "none";
-            logTerminal("Interpreting JSON Web Token returned by Google security nodes...");
-            try {
-                const res = await fetch('/api/auth/google', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ id_token: response.credential })
-                });
-                const data = await res.json();
-                if (data.success) {
-                    logTerminal("<span class='term-success'>[GOOGLE AUTH OK] Integrity footprint verified.</span>");
-                    completeSuccessfulLogin(data);
-                } else {
-                    logTerminal(`<span class="term-warn">[OAUTH ERROR] ${data.message}</span>`);
-                    if (alertBanner) {
-                        alertBanner.innerText = data.message;
-                        alertBanner.style.display = "block";
-                    }
-                }
-            } catch (err) {
-                logTerminal(`<span class="term-warn">[OAUTH NET ERR] ${err.message}</span>`);
-            }
-        }
-
-        async function promptAdminModeSwitch() {
-            if (isAdminAuthenticated) {
-                isAdminAuthenticated = false;
-                localStorage.removeItem('daou_admin_session');
-                if (adminSseConnection) {
-                    adminSseConnection.close();
-                }
-                await setBackendSystemMode("user");
-                document.getElementById('admin-panel-wrapper').classList.remove('visible');
-                document.getElementById('workspace-grid').classList.remove('admin-layout');
-                document.getElementById('system-mode-indicator').innerText = "User Mode";
-                document.getElementById('system-mode-indicator').style.background = "var(--light-gold)";
-                document.getElementById('system-mode-indicator').style.color = "var(--primary-hover)";
-                alert("Returned to standard User View Mode.");
-            } else {
-                const pass = prompt("Enter Administration Access Key to view backend telemetry modules:");
-                if (!pass) return;
-
-                try {
-                    const response = await fetch('/api/admin/login', {
-                        method: 'POST',
-                        headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({ username: 'admin', password: pass })
-                    });
-                    const res = await response.json();
-
-                    if (res.success) {
-                        isAdminAuthenticated = true;
-                        localStorage.setItem('daou_admin_session', 'true');
-                        await setBackendSystemMode("admin");
-                        document.getElementById('admin-panel-wrapper').classList.add('visible');
-                        document.getElementById('workspace-grid').classList.add('admin-layout');
-                        document.getElementById('system-mode-indicator').innerText = "Admin Mode Active";
-                        document.getElementById('system-mode-indicator').style.background = "var(--success)";
-                        document.getElementById('system-mode-indicator').style.color = "white";
-                        logTerminal("<span class='term-success'>[ADMIN AUTH] Telemetry terminal display enabled.</span>");
-                        refreshAdminUserTable();
-                        initializeAdminLiveTelemetry();
-                    } else {
-                        alert(res.message || "Invalid Authorization Footprint.");
-                    }
-                } catch (err) {
-                    alert("Authentication transmission failure.");
-                }
-            }
-        }
-
-        async function setBackendSystemMode(modeString) {
-            try {
-                await fetch('/api/system/mode', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ mode: modeString })
-                });
-            } catch (err) {
-                console.error("Failed to sync structural mode parameters with backend engine.", err);
-            }
-        }
-
-        async function refreshAdminUserTable() {
-            logTerminal("Requesting live infrastructure database snapshot arrays...");
-            try {
-                const response = await fetch('/api/admin/users');
-                const res = await response.json();
-                if (!res.success) throw new Error(res.message);
-                
-                const tbody = document.getElementById('admin-users-tbody');
-                tbody.innerHTML = '';
-                
-                res.users.forEach(u => {
-                    const safeUserJson = JSON.stringify(u).replace(/"/g, '&quot;');
-                    tbody.innerHTML += `
-                        <tr>
-                            <td style="font-family: monospace;">${u.id}</td>
-                            <td style="font-weight: bold;">${u.username}</td>
-                            <td>${u.full_name}</td>
-                            <td style="font-family: monospace;">${u.matric_no}</td>
-                            <td>${u.email}</td>
-                            <td style="display: flex; gap: 8px; justify-content: center;">
-                                <button onclick="openEditModal(${safeUserJson})" class="action-btn" style="background: var(--primary);">Edit</button>
-                                <button onclick="deleteRecordProfile(${u.id})" class="action-btn" style="background: #ef4444;">Delete</button>
-                            </td>
-                        </tr>
-                    `;
-                });
-                logTerminal(`<span class='term-success'>[FETCH OK] Synchronized ${res.users.length} active identity records.</span>`);
-            } catch(err) {
-                logTerminal(`<span class="term-warn">[FETCH ERR] Sync aborted: ${err.message}</span>`);
-            }
-        }
-
-        function openEditModal(userObj) {
-            document.getElementById('edit-user-id').value = userObj.id;
-            document.getElementById('edit-display-id').innerText = userObj.id;
-            document.getElementById('edit-fullname').value = userObj.full_name;
-            document.getElementById('edit-matric').value = userObj.matric_no;
-            document.getElementById('edit-email').value = userObj.email;
-            document.getElementById('admin-edit-modal').style.display = 'block';
-        }
-
-        function closeEditModal() {
-            document.getElementById('admin-edit-modal').style.display = 'none';
-        }
-
-        async function submitRecordModification() {
-            const userId = document.getElementById('edit-user-id').value;
-            const payload = {
-                full_name: document.getElementById('edit-fullname').value,
-                matric_no: document.getElementById('edit-matric').value,
-                email: document.getElementById('edit-email').value
-            };
-            try {
-                const response = await fetch(`/api/admin/users/update/${userId}`, {
-                    method: 'PUT',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify(payload)
-                });
-                const res = await response.json();
-                if (res.success) {
-                    logTerminal("<span class='term-success'>[UPDATE SUCCESS] Structural row modifications saved.</span>");
-                    closeEditModal();
-                    refreshAdminUserTable();
-                } else {
-                    alert(res.message);
-                }
-            } catch(err) {
-                logTerminal(`<span class="term-warn">[JS ERR] Put sequence broken: ${err.message}</span>`);
-            }
-        }
-
-        async function deleteRecordProfile(userId) {
-            if (!confirm(`Purge profile row matrix ID: ${userId} permanently out of database parameters?`)) return;
-            try {
-                const response = await fetch(`/api/admin/users/delete/${userId}`, { method: 'DELETE' });
-                const res = await response.json();
-                if (res.success) {
-                    logTerminal(`<span class="term-warn">[PURGE COMPLETED] Removed row matching identifier ID ${userId}.</span>`);
-                    refreshAdminUserTable();
-                }
-            } catch(err) {
-                console.error(err);
-            }
-        }
-
-        function switchTab(target) {
-            document.querySelectorAll('#main-dashboard-container .tab').forEach(t => t.classList.remove('active'));
-            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-            document.getElementById('tab-' + target).classList.add('active');
-            document.getElementById('content-' + target).classList.add('active');
-        }
-
-        async function handleDirectInjection(e) {
-            e.preventDefault();
-            try {
-                const payload = {
-                    username: document.getElementById('db-user').value,
-                    password: document.getElementById('db-pass').value,
-                    email: document.getElementById('db-email').value,
-                    full_name: document.getElementById('db-fullname').value
-                };
-                const response = await fetch('/api/register', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify(payload)
-                });
-                const res = await response.json();
-                if(res.success) {
-                    logTerminal("<span class='term-success'>[DB OK] Row injected successfully.</span>");
-                    alert(`Account injected successfully into database framework structure! Code: ${res.generated_matric}`);
-                    refreshAdminUserTable();
-                } else {
-                    logTerminal(`<span class="term-warn">[DB ERR] ${res.message}</span>`);
-                }
-            } catch (err) {
-                logTerminal(`<span class="term-warn">[JS ERR] Injection failed: ${err.message}</span>`);
-            }
-        }
-
-        async function executeLogin(e) {
-            e.preventDefault();
-            const alertBanner = document.getElementById('login-alert');
-            if (alertBanner) alertBanner.style.display = "none";
-            
-            const userVal = document.getElementById('login-username').value;
-            const passVal = document.getElementById('login-password').value;
-
-            logTerminal(`Initiating credentials checking loop for user tracking: ${userVal}`);
-            try {
-                const response = await fetch('/api/login', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ username: userVal, password: passVal })
-                });
-                if (!response.ok) {
-                    const errorData = await response.json();
-                    throw new Error(errorData.message || `Server responded with status ${response.status}`);
-                }
-                const res = await response.json();
-
-                if (res.success) {
-                    cachedUserData = res;
-                    document.getElementById('masked-email').innerText = res.masked_email;
-                    document.getElementById('sub-login').classList.remove('active');
-                    document.getElementById('sub-verify').classList.add('active');
-                    
-                    initiateTimerCountdown(res.expires_in);
-                    
-                    logTerminal("<span class='term-success'>[SUCCESS] Password validated instantly. Async thread dispatched OTP to mailbox.</span>");
-                    triggerEmailToastDelivery(res.masked_email);
-                } else {
-                    logTerminal(`<span class="term-warn">[AUTH FAILED] ${res.message}</span>`);
-                    if (alertBanner) {
-                        alertBanner.innerText = res.message;
-                        alertBanner.style.display = "block";
-                    }
-                }
-            } catch (err) {
-                logTerminal(`<span class="term-warn">[SERVER CRASH / NET ERR] ${err.message}</span>`);
-                if (alertBanner) {
-                    alertBanner.innerText = "System connection failure. Check backend terminal console logs.";
-                    alertBanner.style.display = "block";
-                }
-            }
-        }
-
-        async function executeVerification(e) {
-            e.preventDefault();
-            const alertBanner = document.getElementById('verify-alert');
-            if (alertBanner) alertBanner.style.display = "none";
-            const inputOtp = document.getElementById('otp-code').value;
-
-            try {
-                const response = await fetch('/api/verify-otp', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ user_id: cachedUserData.user_id, otp_code: inputOtp })
-                });
-                const res = await response.json();
-
-                if (res.success) {
-                    clearInterval(activeCountdownInterval);
-                    closeEmailToast();
-                    completeSuccessfulLogin(res);
-                } else {
-                    logTerminal(`<span class="term-warn">[2FA FAILED] ${res.message}</span>`);
-                    if (alertBanner) {
-                        alertBanner.innerText = res.message;
-                        alertBanner.style.display = "block";
-                    }
-                }
-            } catch (err) {
-                logTerminal(`<span class="term-warn">[2FA NET ERR] ${err.message}</span>`);
-            }
-        }
-
-        async function submitPortalRating(e) {
-            e.preventDefault();
-            const selectElement = document.getElementById('portal-rating-select');
-            const ratingValue = selectElement.value;
-            
-            if (!cachedUserData || !cachedUserData.user_id) {
-                alert("Session invalid or footprint has expired.");
-                return;
-            }
-            
-            try {
-                const response = await fetch('/api/ratings', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ 
-                        user_id: parseInt(cachedUserData.user_id, 10), 
-                        rating: parseInt(ratingValue, 10) 
-                    })
-                });
-                
-                if (!response.ok) {
-                    const errorData = await response.json().catch(() => ({ message: `HTTP ${response.status} Server Error` }));
-                    throw new Error(errorData.message);
-                }
-                
-                const res = await response.json();
-                if (res.success) {
-                    alert("Thank you! Your metric rating score has been recorded into the dataset tracking index.");
-                    selectElement.value = "";
-                } else {
-                    alert(res.message);
-                }
-            } catch(err) {
-                console.error("Payload Transmission details:", err);
-                alert(`Ratings payload transmission error: ${err.message || 'Check browser terminal console logs.'}`);
-            }
-        }
-
-        function handleCSVDownloadLink(e) {
-            e.preventDefault();
-            if (!isAdminAuthenticated) {
-                alert("Extraction Engine Blocked: Spreadsheet generation requires administrative mode workspace parameters.");
-                return;
-            }
-            window.location.href = "/api/ratings/export";
-        }
-
-        function completeSuccessfulLogin(res) {
-            logTerminal("<span class='term-success'>[CLEARANCE SUCCESS] Handshake authorized. Displaying dashboard parameters.</span>");
-            cachedUserData = res;
-            
-            localStorage.setItem('daou_user_session', JSON.stringify(res));
-            
-            document.getElementById('dash-fullname').value = res.user_info.full_name;
-            document.getElementById('dash-matric').value = res.user_info.matric_no;
-            
-            const googleMsg = document.getElementById('google-status-msg');
-            googleMsg.innerText = "🛡️ Google Authentication Linkage: ACTIVE & SECURED";
-            googleMsg.style.color = "var(--success)";
-            
-            document.getElementById('auth-container').classList.remove('active');
-            document.getElementById('main-dashboard-container').classList.add('active');
-            switchTab('profile');
-        }
-
-        function triggerSignOut() {
-            clearInterval(activeCountdownInterval);
-            cachedUserData = null;
-            localStorage.removeItem('daou_user_session');
-            document.getElementById('otp-code').value = '';
-            document.getElementById('main-dashboard-container').classList.remove('active');
-            document.getElementById('sub-verify').classList.remove('active');
-            document.getElementById('sub-login').classList.add('active');
-            document.getElementById('auth-container').classList.add('active');
-            closeEmailToast();
-            logTerminal("Active authorization tokens cleared.");
-        }
-    </script>
-</body>
-</html>
+        while True:
+            msg = q.get()
+            if msg:
+                yield msg
+            time.sleep(0.2)
+
+    return Response(stream_with_context(event_stream_loop()), mimetype="text/event-stream")
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=True)
