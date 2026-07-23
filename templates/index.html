@@ -726,7 +726,7 @@
                     email: document.getElementById('db-email').value,
                     full_name: document.getElementById('db-fullname').value
                 };
-                const response = await fetch('/api/register', {
+                const response = await fetch('/api/admin/inject-user', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify(payload)
