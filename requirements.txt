@@ -41,6 +41,6 @@ vine==5.1.0
 wcwidth==0.8.2
 webauthn==3.0.0
 Werkzeug==3.1.8
-Flask-SQLAlchemy
-gunicorn
+Flask-SQLAlchemy==3.1.1
+gunicorn==21.2.0
 python-3.11.9
