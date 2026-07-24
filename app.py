@@ -508,13 +508,14 @@ def backend_telemetry_stream():
 # --- INITIALIZE DATABASE & DEFAULT USER ---
 with app.app_context():
     db.create_all()
-    if not UserModel.query.filter_by(username="Enoch").first():
+    # Check if user already exists by username or email before inserting to avoid IntegrityError
+    if not UserModel.query.filter((UserModel.username == "user name") | (UserModel.email == "enoch.default@gmail.com")).first():
         default_user = UserModel(
             username="user name",
             password_hash=generate_password_hash("password"),
             full_name="Enoch Ola",
             matric_no="DAOU/CYB/2026/001",
-            email="@gmail.com"
+            email="enoch.default@gmail.com"
         )
         db.session.add(default_user)
         db.session.commit()
